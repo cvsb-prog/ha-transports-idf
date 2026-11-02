@@ -1,0 +1,187 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Transports IDF",
+        "description": "Jeton de l'API PRIM (Île-de-France Mobilités, « Mes jetons d'authentification ») et point de départ à pied par défaut.",
+        "data": {
+          "jeton": "Jeton PRIM",
+          "zone": "Point de départ (zone)"
+        },
+        "data_description": {
+          "zone": "Sert au calcul des temps de marche vers les arrêts et à l'origine des trajets."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Jeton PRIM refusé",
+        "description": "Le jeton PRIM n'est plus accepté. Colle un nouveau jeton.",
+        "data": {
+          "jeton": "Jeton PRIM"
+        }
+      }
+    },
+    "error": {
+      "jeton_invalide": "Jeton refusé par PRIM.",
+      "injoignable": "PRIM ne répond pas. Réessaie dans un instant."
+    },
+    "abort": {
+      "already_configured": "L'intégration est déjà configurée : ajoute des arrêts et des trajets depuis sa page.",
+      "reauth_successful": "Jeton mis à jour."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Réglages généraux",
+        "data": {
+          "zone": "Point de départ (zone)",
+          "marge": "Marge « en se pressant »",
+          "nb_passages": "Passages affichés par défaut",
+          "intervalle_jour": "Rafraîchissement en journée",
+          "intervalle_nuit": "Rafraîchissement la nuit",
+          "debut_nuit": "Début de la nuit",
+          "fin_nuit": "Fin de la nuit",
+          "ignorer_information": "Ignorer les simples messages d'information"
+        },
+        "data_description": {
+          "marge": "Un passage est « atteignable » si son départ est dans au moins (temps de marche + marge), « en se pressant » s'il reste au moins le temps de marche, sinon « trop tard ».",
+          "ignorer_information": "Les trajets ne passent en « perturbé » que pour un vrai impact (interruption, retards, déviation…)."
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "arret": {
+      "entry_type": "Arrêt",
+      "initiate_flow": {
+        "user": "Ajouter un arrêt",
+        "reconfigure": "Modifier l'arrêt"
+      },
+      "step": {
+        "user": {
+          "title": "Ajouter un arrêt",
+          "description": "Nom de l'arrêt ou de la gare (bus, tram, métro, RER, train).",
+          "data": {
+            "recherche": "Recherche"
+          }
+        },
+        "choix": {
+          "title": "Choisir l'arrêt",
+          "data": {
+            "arret": "Arrêt"
+          }
+        },
+        "lignes": {
+          "title": "Lignes suivies",
+          "description": "Lignes à afficher pour {arret}. Ne rien cocher revient à toutes les suivre.",
+          "data": {
+            "lignes": "Lignes"
+          }
+        },
+        "marche": {
+          "title": "Temps de marche",
+          "description": "Temps de marche depuis le point de départ : {calcul}. Corrige-le si besoin (porte loin du point GPS, escaliers…).",
+          "data": {
+            "temps_marche": "Temps de marche"
+          }
+        },
+        "reconfigure": {
+          "title": "Modifier {arret}",
+          "data": {
+            "lignes": "Lignes",
+            "temps_marche": "Temps de marche",
+            "recalculer": "Recalculer le temps de marche"
+          }
+        }
+      },
+      "error": {
+        "jeton_invalide": "Jeton refusé par PRIM.",
+        "injoignable": "PRIM ne répond pas. Réessaie dans un instant.",
+        "aucun_resultat": "Aucun arrêt trouvé. Essaie un autre nom."
+      },
+      "abort": {
+        "deja_suivi": "Cet arrêt est déjà suivi.",
+        "jeton_invalide": "Jeton refusé par PRIM.",
+        "injoignable": "PRIM ne répond pas. Réessaie dans un instant.",
+        "reconfigure_successful": "Arrêt mis à jour."
+      }
+    },
+    "trajet": {
+      "entry_type": "Trajet",
+      "initiate_flow": {
+        "user": "Ajouter un trajet",
+        "reconfigure": "Modifier le trajet"
+      },
+      "step": {
+        "user": {
+          "title": "Ajouter un trajet",
+          "description": "Un trajet habituel d'une personne. Pendant la veille, toutes les lignes de l'itinéraire choisi (correspondances comprises) sont surveillées et l'itinéraire est recalculé en direct.",
+          "data": {
+            "nom": "Nom du trajet",
+            "personne": "Personne",
+            "origine": "Départ (zone)",
+            "recherche": "Destination (arrêt, adresse, lieu)",
+            "heure_depart": "Heure",
+            "avance": "Veille avant le départ habituel",
+            "type_heure": "Cette heure est…"
+          },
+          "data_description": {
+            "type_heure": "Heure d'arrivée cible : la veille commence avant le départ habituel ; si une perturbation ou un retard oblige à partir plus tôt pour arriver à l'heure, une alerte le dit. Heure de départ : on compare l'arrivée des itinéraires partant à cette heure."
+          }
+        },
+        "destination": {
+          "title": "Choisir la destination",
+          "data": {
+            "destination": "Destination"
+          }
+        },
+        "itineraire": {
+          "title": "Choisir l'itinéraire",
+          "description": "Itinéraires proposés vers {destination} au prochain jour ouvré (départ → arrivée). Les lignes de celui choisi seront surveillées et son heure de départ sert de départ habituel.",
+          "data": {
+            "itineraire": "Itinéraire"
+          }
+        },
+        "reconfigure": {
+          "title": "Modifier le trajet",
+          "description": "Destination : {destination}\nItinéraire suivi : {itineraire}",
+          "data": {
+            "nom": "Nom du trajet",
+            "personne": "Personne",
+            "origine": "Départ (zone)",
+            "heure_depart": "Heure",
+            "avance": "Veille avant le départ habituel",
+            "recalculer": "Choisir un autre itinéraire",
+            "type_heure": "Cette heure est…"
+          },
+          "data_description": {
+            "type_heure": "Heure d'arrivée cible : la veille commence avant le départ habituel ; si une perturbation ou un retard oblige à partir plus tôt pour arriver à l'heure, une alerte le dit. Heure de départ : on compare l'arrivée des itinéraires partant à cette heure."
+          }
+        }
+      },
+      "error": {
+        "jeton_invalide": "Jeton refusé par PRIM.",
+        "injoignable": "PRIM ne répond pas. Réessaie dans un instant.",
+        "aucun_resultat": "Aucun lieu trouvé. Essaie un autre nom."
+      },
+      "abort": {
+        "aucun_itineraire": "Aucun itinéraire en transports trouvé pour ce trajet.",
+        "jeton_invalide": "Jeton refusé par PRIM.",
+        "injoignable": "PRIM ne répond pas. Réessaie dans un instant.",
+        "reconfigure_successful": "Trajet mis à jour."
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "passages": {
+        "name": "Prochain départ atteignable"
+      }
+    },
+    "binary_sensor": {
+      "perturbation": {
+        "name": "Perturbation"
+      }
+    }
+  }
+}
