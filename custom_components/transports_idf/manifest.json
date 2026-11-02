@@ -1,0 +1,12 @@
+{
+  "domain": "transports_idf",
+  "name": "Transports IDF",
+  "after_dependencies": ["frontend", "http"],
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://prim.iledefrance-mobilites.fr/",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "0.2.0"
+}
