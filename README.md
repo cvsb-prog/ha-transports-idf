@@ -3,13 +3,14 @@
 Intégration Home Assistant pour les transports en commun d'Île-de-France, à partir des API
 [PRIM](https://prim.iledefrance-mobilites.fr/) d'Île-de-France Mobilités, avec sa carte de tableau de bord.
 
-Version actuelle : **0.2.0** (voir le [CHANGELOG](CHANGELOG.md)).
+Version actuelle : **0.3.0** (voir le [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctionnalités
 
 - **Arrêts** : prochains passages en temps réel (SIRI Lite), capteur « prochain départ atteignable » selon le temps de marche et une marge.
 - **Trajets** : itinéraire habituel, capteur binaire « perturbation » sur les lignes empruntées.
 - Événement `transports_idf_alerte` pour bâtir ses propres alertes de trajet.
+- Service **Partir maintenant** : itinéraires d'un trajet au départ de maintenant, marche comprise.
 
 ## Carte de tableau de bord
 

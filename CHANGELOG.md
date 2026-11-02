@@ -3,6 +3,13 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.3.0] - 2026-11-02
+
+### Ajouté
+
+- Service partir_maintenant : itinéraires d'un trajet au départ de maintenant, marche comprise.
+- Carte : itinéraires proposés sous chaque trajet.
+
 ## [0.2.0] - 2026-11-02
 
 ### Ajouté
