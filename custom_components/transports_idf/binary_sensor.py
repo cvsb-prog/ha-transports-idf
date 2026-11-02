@@ -12,7 +12,9 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import TransportsConfigEntry
 from .const import SOUS_TRAJET, T_AVANCE, T_DEST_NOM, T_HEURE, T_NOM, T_TYPE_HEURE, T_ORIGINE, T_PERSONNE, T_RESUME, T_SECTIONS
-from .coordinator import EtatTrajet, TraficCoordinator, depart_habituel
+from homeassistant.util import dt as dt_util
+
+from .coordinator import DUREE_MAINTENANT, EtatTrajet, TraficCoordinator, depart_habituel
 from .sensor import appareil
 
 
@@ -29,7 +31,7 @@ class TrajetSensor(CoordinatorEntity[TraficCoordinator], BinarySensorEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "perturbation"
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
-    _unrecorded_attributes = frozenset({"perturbations", "rechange", "sections", "reference", "plus_rapides", "conseil"})
+    _unrecorded_attributes = frozenset({"perturbations", "rechange", "sections", "reference", "plus_rapides", "conseil", "maintenant"})
 
     def __init__(self, coord: TraficCoordinator, sous: ConfigSubentry) -> None:
         super().__init__(coord)
@@ -63,6 +65,9 @@ class TrajetSensor(CoordinatorEntity[TraficCoordinator], BinarySensorEntity):
             "heure": d.get(T_HEURE),
             "depart_habituel": depart_habituel(d),
             "conseil": e.conseil,
+            "maintenant": e.maintenant
+            if e.maintenant and dt_util.utcnow() - dt_util.parse_datetime(e.maintenant["le"]) < DUREE_MAINTENANT
+            else None,
             "avance": d.get(T_AVANCE),
             "en_veille": e.en_veille,
             "itineraire": d.get(T_RESUME),

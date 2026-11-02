@@ -183,5 +183,17 @@
         "name": "Perturbation"
       }
     }
+  },
+  "services": {
+    "partir_maintenant": {
+      "name": "Partir maintenant",
+      "description": "Calcule les itinéraires au départ de maintenant pour un trajet (marche comprise). Le résultat s'affiche 15 min dans la carte et peut être renvoyé en réponse.",
+      "fields": {
+        "trajet": {
+          "name": "Trajet",
+          "description": "Capteur « Perturbation » du trajet."
+        }
+      }
+    }
   }
 }

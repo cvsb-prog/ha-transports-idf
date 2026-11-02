@@ -24,6 +24,7 @@ from .const import (
     A_MARCHE,
     A_MARCHE_CALCULE,
     A_NOM,
+    A_ZONE_ID,
     DOMAIN,
     ETAT_ATTEIGNABLE,
     NOM,
@@ -91,6 +92,7 @@ class ArretSensor(CoordinatorEntity[PassagesCoordinator], SensorEntity):
         return {
             "type_transports_idf": "arret",
             "arret": d.get(A_NOM),
+            "zone_id": d.get(A_ZONE_ID),
             "commune": d.get(A_COMMUNE),
             "temps_marche": d.get(A_MARCHE),
             "temps_marche_calcule": d.get(A_MARCHE_CALCULE),
