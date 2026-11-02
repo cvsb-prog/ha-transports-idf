@@ -4,7 +4,7 @@
  * États : atteignable (départ ≥ marche + marge), en se pressant (≥ marche), trop tard.
  * Les états sont recalculés toutes les 15 s dans le navigateur entre deux mises à jour.
  */
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },
@@ -21,6 +21,7 @@ const DEFAUTS = {
   afficher_marche: true,
   afficher_mode: false,
   afficher_plan: true,
+  filtre_arrets: "tous", // ou "mes_trajets"
   couleur_atteignable: "",
   couleur_presse: "",
   couleur_trop_tard: "",
@@ -55,6 +56,8 @@ class TransportsIdfCard extends HTMLElement {
     this._ouverts = new Map(); // état des <details> (clé → ouvert), conservé entre deux rendus
     this._plans = new Set(); // arrêts dont le plan est affiché
     this._blocs = new Map(); // entity_id → éléments persistants de l'arrêt
+    this._enCours = new Set(); // trajets dont le calcul « Partir maintenant » est en cours
+    this._erreurs = new Map(); // trajet → message d'erreur affiché quelques secondes
     this.shadowRoot.addEventListener("toggle", (e) => {
       const cle = e.target?.dataset?.cle;
       if (cle) this._ouverts.set(cle, e.target.open);
@@ -85,6 +88,13 @@ class TransportsIdfCard extends HTMLElement {
             },
             { name: "nb_passages", selector: { number: { min: 0, max: 30, mode: "box" } } },
             {
+              name: "filtre_arrets",
+              selector: { select: { mode: "dropdown", options: [
+                { value: "tous", label: "Tous les arrêts" },
+                { value: "mes_trajets", label: "Arrêts de mes trajets" },
+              ] } },
+            },
+            {
               name: "afficher_trajets",
               selector: { select: { mode: "dropdown", options: [
                 { value: "miens", label: "Mes trajets" },
@@ -112,7 +122,8 @@ class TransportsIdfCard extends HTMLElement {
       computeLabel: (s) =>
         ({
           titre: "Titre",
-          entities: "Arrêts (vide = tous)",
+          entities: "Arrêts (vide = selon le filtre)",
+          filtre_arrets: "Arrêts affichés (si aucun n'est choisi)",
           regroupement: "Présentation",
           nb_passages: "Passages par arrêt (0 = réglage de l'intégration)",
           afficher_trajets: "Trajets",
@@ -157,23 +168,60 @@ class TransportsIdfCard extends HTMLElement {
   // ---- Données -----------------------------------------------------------
   _arrets() {
     if (!this._hass) return [];
-    const ids = this._config?.entities?.length
-      ? this._config.entities
-      : Object.keys(this._hass.states).filter((e) => this._hass.states[e].attributes.type_transports_idf === "arret");
-    return ids.map((id) => this._hass.states[id]).filter(Boolean);
+    if (this._config?.entities?.length) return this._config.entities.map((id) => this._hass.states[id]).filter(Boolean);
+    const tous = Object.values(this._hass.states).filter((s) => s.attributes.type_transports_idf === "arret");
+    if (this._config.filtre_arrets !== "mes_trajets") return tous;
+    // Arrêts où l'on monte dans un des trajets de l'utilisateur connecté.
+    const zones = new Set(), noms = new Set();
+    const norm = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+    for (const t of this._mesTrajets(true)) {
+      for (const sec of t.attributes.sections || []) {
+        if (sec.de_id) zones.add(sec.de_id);
+        if (sec.de) noms.add(norm(sec.de));
+      }
+    }
+    const miens = tous.filter((s) => zones.has(s.attributes.zone_id) || noms.has(norm(s.attributes.arret)));
+    return miens.length ? miens : tous;
+  }
+
+  _mesTrajets(toujoursMiens = false) {
+    if (!this._hass) return [];
+    const moi = this._hass.user?.id;
+    const tous = !toujoursMiens && this._config.afficher_trajets === "tous";
+    return Object.values(this._hass.states).filter((s) => {
+      if (s.attributes.type_transports_idf !== "trajet") return false;
+      if (tous) return true;
+      const personne = this._hass.states[s.attributes.personne];
+      return !moi || !personne || personne.attributes.user_id === moi;
+    });
   }
 
   _trajets() {
     if (!this._hass || this._config.afficher_trajets === "aucun") return [];
-    const moi = this._hass.user?.id;
-    return Object.values(this._hass.states).filter((s) => {
-      const a = s.attributes;
-      if (a.type_transports_idf !== "trajet") return false;
-      if (s.state !== "on" && !a.en_veille) return false; // rien à dire hors veille si tout va bien
-      if (this._config.afficher_trajets === "tous") return true;
-      const personne = this._hass.states[a.personne];
-      return !moi || !personne || personne.attributes.user_id === moi;
-    });
+    return this._mesTrajets();
+  }
+
+  _maintenant(a) {
+    const m = a.maintenant;
+    if (!m?.le) return null;
+    return Date.now() - new Date(m.le).getTime() < 15 * 60000 ? m : null;
+  }
+
+  async _partir(id) {
+    if (this._enCours.has(id)) return;
+    this._enCours.add(id);
+    this._erreurs.delete(id);
+    this._rendu();
+    try {
+      await this._hass.callService("transports_idf", "partir_maintenant", { trajet: id });
+      this._ouverts.set(`${id}|maintenant0`, true);
+    } catch (err) {
+      this._erreurs.set(id, err?.message || "Calcul impossible");
+      setTimeout(() => { this._erreurs.delete(id); this._rendu(); }, 10000);
+    } finally {
+      this._enCours.delete(id);
+      this._rendu();
+    }
   }
 
   _couleur(cle) {
@@ -278,13 +326,24 @@ class TransportsIdfCard extends HTMLElement {
     } else if (s.state === "on") statut = `<span class="statut mauvais">perturbé</span>`;
 
     const morceaux = [];
+    const vus = new Set();
+    const maintenant = this._maintenant(a);
+    if (maintenant) {
+      const its = maintenant.itineraires || [];
+      if (!its.length) morceaux.push(`<div class="sous">Aucun itinéraire trouvé au départ de maintenant.</div>`);
+      its.forEach((it, n) => {
+        vus.add(`${it.depart}|${it.resume}`);
+        morceaux.push(this._details(`${id}|maintenant${n}`, n === 0,
+          `<span class="intitule">${n === 0 ? "Maintenant" : "Ou"}${it.habituel ? " (habituel)" : ""}</span><span class="horaires">${this._horaires(it)}</span><span class="lignes-it">${this._lignesIt(it)}</span>`,
+          this._etapes(it), "maintenant"));
+      });
+    }
     for (const p of a.perturbations || []) {
       morceaux.push(this._details(`${id}|p|${p.id}`, false,
         `<span class="alerte-titre">⚠️ ${echapper((p.lignes_trajet || []).join(", "))} — ${echapper(p.titre)}</span>`,
         `<div class="message">${echapper(p.message || p.titre)}${p.fin ? `<div class="sous">Jusqu'au ${echapper(p.fin.slice(6, 8))}/${echapper(p.fin.slice(4, 6))} à ${Number(p.fin.slice(9, 11))} h ${echapper(p.fin.slice(11, 13))}</div>` : ""}</div>`,
         "perturbation"));
     }
-    const vus = new Set();
     const ajouter = (it, cle, ouvert, intitule) => {
       if (!it?.etapes?.length) return;
       const sig = `${it.depart}|${it.resume}`;
@@ -301,8 +360,15 @@ class TransportsIdfCard extends HTMLElement {
     for (const [n, it] of (a.plus_rapides || []).entries()) {
       ajouter(it, `rapide${n}`, false, arrivee ? `Part ${it.gain} min plus tard` : `Plus rapide (−${it.gain} min)`);
     }
-    const classe = s.state === "on" || c?.impossible ? "trajet mauvais" : (c?.avance || 0) >= 3 ? "trajet attention" : "trajet";
-    return `<div class="${classe}"><div class="trajet-tete"><b>${echapper(a.trajet)}</b><span class="sous">${echapper(repere)}</span>${statut}</div>${morceaux.join("")}</div>`;
+    const actif = s.state === "on" || a.en_veille || maintenant;
+    let classe = s.state === "on" || c?.impossible ? "trajet mauvais" : (c?.avance || 0) >= 3 ? "trajet attention" : "trajet";
+    if (!actif) {
+      classe += " compact";
+      statut = "";
+    }
+    const bouton = `<button class="partir" type="button" data-partir="${echapper(id)}"${this._enCours.has(id) ? " disabled" : ""}>${this._enCours.has(id) ? "Calcul…" : "🚶 Partir maintenant"}</button>`;
+    const erreur = this._erreurs.has(id) ? `<div class="erreur">${echapper(this._erreurs.get(id))}</div>` : "";
+    return `<div class="${classe}"><div class="trajet-tete"><b>${echapper(a.trajet)}</b><span class="sous">${echapper(repere)}</span>${statut}${bouton}</div>${erreur}${actif ? morceaux.join("") : ""}</div>`;
   }
 
   _urlPlan(a) {
@@ -331,6 +397,10 @@ class TransportsIdfCard extends HTMLElement {
       aucun: this.shadowRoot.querySelector(".aucun"),
       style: this.shadowRoot.querySelector("style"),
     };
+    this._el.trajets.addEventListener("click", (e) => {
+      const b = e.target.closest?.("[data-partir]");
+      if (b) this._partir(b.dataset.partir);
+    });
     this._blocs.clear();
     this._squelette = true;
   }
@@ -455,6 +525,15 @@ class TransportsIdfCard extends HTMLElement {
       .trajet.mauvais { border-left-color: var(--error-color); }
       .trajet-tete { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
       .statut { margin-left: auto; font-size: .85em; font-weight: 600; }
+      .trajet.compact { border-left-color: var(--divider-color, rgba(127,127,127,.3)); padding: 6px 12px; }
+      .trajet.compact .partir { margin-left: auto; }
+      .partir {
+        font: inherit; font-size: .82em; font-weight: 600; color: var(--primary-color); cursor: pointer; white-space: nowrap;
+        background: transparent; border: 1px solid var(--primary-color); border-radius: 14px; padding: 2px 10px;
+      }
+      .partir:disabled { opacity: .6; cursor: progress; }
+      .erreur { color: var(--error-color); font-size: .85em; }
+      .maintenant summary .intitule { color: var(--primary-color); }
       .statut.ok { color: var(--ti-atteignable); }
       .statut.attention { color: var(--ti-presse); }
       .statut.mauvais { color: var(--error-color); }

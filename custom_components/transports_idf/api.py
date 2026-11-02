@@ -278,6 +278,15 @@ def date_navitia(x: Any) -> datetime | None:
         return None
 
 
+def _zone_lieu(lieu: Any) -> str | None:
+    """Zone d'arrêt (stop_area) d'un lieu Navitia, pour relier un trajet aux arrêts suivis."""
+    if not isinstance(lieu, dict):
+        return None
+    if lieu.get("embedded_type") == "stop_area":
+        return lieu.get("id")
+    return ((lieu.get("stop_point") or {}).get("stop_area") or {}).get("id")
+
+
 def heure_navitia(x: Any) -> str | None:
     """« 20261103T080700 » → « 8 h 07 »."""
     d = date_navitia(x)
@@ -309,6 +318,7 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                     "direction": info.get("direction"),
                     "de": (s.get("from") or {}).get("name"),
                     "vers": vers,
+                    "de_id": _zone_lieu(s.get("from")),
                     "depart": s.get("departure_date_time"),
                 }
                 sections.append(section)

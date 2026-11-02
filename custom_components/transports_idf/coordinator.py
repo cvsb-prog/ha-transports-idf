@@ -10,7 +10,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -58,7 +58,7 @@ TRAFIC_VEILLE = timedelta(minutes=2)
 TRAFIC_REPOS = timedelta(minutes=20)
 APRES_DEPART = timedelta(minutes=10)  # la veille se prolonge un peu après l'heure prévue
 VALIDITE_RECHANGE = timedelta(minutes=10)
-GAIN_MINIMUM = timedelta(minutes=3)  # en dessous, le trajet habituel reste conseillé
+DUREE_MAINTENANT = timedelta(minutes=15)  # affichage du résultat de « Partir maintenant »
 
 
 def option(entry: ConfigEntry, cle: str) -> Any:
@@ -206,6 +206,8 @@ class EtatTrajet:
     calcule_le: datetime | None = None
     conseil: dict[str, Any] | None = None  # mode « arrivée » : itinéraire à prendre au plus tard
     depart_notifie: datetime | None = None
+    bloquees: list[str] = field(default_factory=list)
+    maintenant: dict[str, Any] | None = None  # résultat de « Partir maintenant »
     en_veille: bool = False
     notifiees: set[str] = field(default_factory=set)
 
@@ -270,6 +272,7 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
             # Itinéraire de rechange si une ligne du trajet est bloquée ou très perturbée.
             bloquees = sorted({lid for p in perts.values() if p["effet"] in EFFETS_BLOQUANTS for lid in p["_ids"]})
             etat.perturbations = [{k: v for k, v in p.items() if k != "_ids"} for p in perts.values()]
+            etat.bloquees = bloquees
             etat.en_veille = self.fenetre(depart_habituel(t.data), int(t.data.get(T_AVANCE, 60)), maintenant)
             une_veille |= etat.en_veille
             # Itinéraires en direct : à chaque rafraîchissement pendant la veille,
@@ -286,6 +289,50 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
                 del self.etats[sid]
         self.update_interval = TRAFIC_VEILLE if une_veille else TRAFIC_REPOS
         return dict(self.etats)
+
+    async def partir_maintenant(self, sous_id: str) -> dict[str, Any]:
+        """Itinéraires au départ de maintenant pour un trajet, gardés DUREE_MAINTENANT pour la carte."""
+        sous = self.config_entry.subentries[sous_id]
+        etat = self.etats.setdefault(sous_id, EtatTrajet())
+        d = sous.data
+        lat, lon = coordonnees_zone(self.hass, d.get(T_ORIGINE) or self.config_entry.data.get(CONF_ZONE))
+        depuis, vers = f"{lon};{lat}", d[T_DEST_ID]
+        quand = dt_util.now().replace(tzinfo=None)
+        lignes_ref = [s["ligne_id"] for s in d.get(T_SECTIONS, []) if s.get("ligne_id")]
+        bloquees = etat.bloquees
+        appels = [self.client.itineraires(depuis, vers, quand, bloquees)]
+        if lignes_ref and not set(lignes_ref) & set(bloquees):
+            appels.append(self.client.itineraires(depuis, vers, quand, autorises=lignes_ref))
+        resultats = await asyncio.gather(*appels, return_exceptions=True)
+        if isinstance(resultats[0], ErreurJeton):
+            raise HomeAssistantError("Jeton PRIM refusé")
+        if isinstance(resultats[0], Exception):
+            raise HomeAssistantError(f"Calculateur PRIM indisponible : {resultats[0]}")
+        options = resultats[0]
+        refs = resultats[1] if len(resultats) > 1 and isinstance(resultats[1], list) else []
+
+        def lignes(o):
+            return [s["ligne_id"] for s in o["sections"]]
+
+        def arrivee(o):
+            return date_navitia(o.get("arrivee")) or datetime.max
+
+        habituel = min((o for o in refs + options if lignes(o) == lignes_ref), key=arrivee, default=None)
+        autres = [o for o in options if lignes(o) != lignes_ref and not set(lignes(o)) & set(bloquees)]
+        liste = ([{**habituel, "habituel": True}] if habituel else []) + [{**o, "habituel": False} for o in autres]
+        vus, tries = set(), []
+        for o in sorted(liste, key=arrivee):
+            cle = (o.get("depart"), o.get("resume"))
+            if cle not in vus:
+                vus.add(cle)
+                tries.append(o)
+        etat.maintenant = {
+            "le": dt_util.utcnow().isoformat(),
+            "itineraires": tries[:3],
+            "perturbe": bool(etat.perturbations),
+        }
+        self.async_update_listeners()
+        return etat.maintenant
 
     async def _comparer(self, trajet, etat: EtatTrajet, bloquees: list[str]) -> None:
         """Trajet habituel recalculé maintenant, itinéraires plus intéressants, conseil de départ.
