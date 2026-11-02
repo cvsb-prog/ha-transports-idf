@@ -1,0 +1,79 @@
+"""Constantes de l'intégration Transports IDF."""
+
+from __future__ import annotations
+
+DOMAIN = "transports_idf"
+NOM = "Transports IDF"
+VERSION = "0.2.0"
+
+BASE_URL = "https://prim.iledefrance-mobilites.fr/marketplace"
+NAVITIA = f"{BASE_URL}/v2/navitia"
+
+# Entrée principale
+CONF_JETON = "jeton"
+CONF_ZONE = "zone"
+
+# Options générales
+OPT_MARGE = "marge"
+OPT_INTERVALLE_JOUR = "intervalle_jour"
+OPT_INTERVALLE_NUIT = "intervalle_nuit"
+OPT_DEBUT_NUIT = "debut_nuit"
+OPT_FIN_NUIT = "fin_nuit"
+OPT_NB_PASSAGES = "nb_passages"
+OPT_IGNORER_INFO = "ignorer_information"
+
+DEFAUTS = {
+    OPT_MARGE: 2,
+    OPT_INTERVALLE_JOUR: 30,
+    OPT_INTERVALLE_NUIT: 300,
+    OPT_DEBUT_NUIT: "01:30:00",
+    OPT_FIN_NUIT: "05:00:00",
+    OPT_NB_PASSAGES: 6,
+    OPT_IGNORER_INFO: True,
+}
+
+# Sous-entrées
+SOUS_ARRET = "arret"
+SOUS_TRAJET = "trajet"
+
+# Données d'un arrêt
+A_ZONE_ID = "zone_id"  # stop_area Navitia
+A_NOM = "nom"
+A_COMMUNE = "commune"
+A_REFS = "refs"  # MonitoringRef SIRI retenues
+A_LIGNES = "lignes"  # [{id, code, mode, couleur, couleur_texte, nom}]
+A_LIGNES_SUIVIES = "lignes_suivies"  # ids, vide = toutes
+A_MARCHE = "temps_marche"  # minutes
+A_MARCHE_CALCULE = "temps_marche_calcule"  # minutes, None si estimé
+A_LAT = "lat"
+A_LON = "lon"
+
+# Données d'un trajet
+T_NOM = "nom"
+T_PERSONNE = "personne"
+T_ORIGINE = "origine"  # entity_id d'une zone
+T_DEST_ID = "destination_id"
+T_DEST_NOM = "destination_nom"
+T_HEURE = "heure_depart"  # heure d'arrivée cible OU de départ, selon T_TYPE_HEURE
+T_TYPE_HEURE = "type_heure"  # "arrivee" ou "depart"
+T_DEPART_HABITUEL = "depart_habituel"  # « HH:MM:SS », départ de l'itinéraire choisi
+T_ARRIVEE_HABITUELLE = "arrivee_habituelle"
+T_DUREE = "duree"  # secondes
+T_AVANCE = "avance"  # minutes de veille avant le départ
+T_SECTIONS = "sections"  # [{ligne_id, code, mode, couleur, de, vers, direction}]
+T_RESUME = "resume"
+
+# Écart à partir duquel on conseille de partir plus tôt / un autre itinéraire
+ECART_MINUTES = 3
+
+# Événement d'alerte, exploité par une automatisation
+EVENEMENT_ALERTE = f"{DOMAIN}_alerte"
+
+ETAT_ATTEIGNABLE = "atteignable"
+ETAT_PRESSE = "presse"
+ETAT_TROP_TARD = "trop_tard"
+
+# Effets Navitia considérés comme sans gravité (information seule)
+EFFETS_INFO = {"OTHER_EFFECT", "UNKNOWN_EFFECT", "ADDITIONAL_SERVICE"}
+# Effets qui justifient d'éviter la ligne dans un itinéraire de rechange
+EFFETS_BLOQUANTS = {"NO_SERVICE", "REDUCED_SERVICE", "SIGNIFICANT_DELAYS"}
