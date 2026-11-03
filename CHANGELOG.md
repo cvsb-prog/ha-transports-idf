@@ -3,6 +3,12 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.5.0] - 2026-11-03
+
+### Ajouté
+
+- Position conseillée dans la rame (voiture, avant / milieu / arrière) pour chaque correspondance, d'après le jeu de données RATP « Positionnement dans la rame », livré avec l'intégration.
+
 ## [0.4.0] - 2026-11-03
 
 ### Ajouté

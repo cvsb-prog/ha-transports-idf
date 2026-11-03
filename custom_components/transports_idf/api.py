@@ -413,6 +413,7 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                     "vers": vers,
                     "de_id": _zone_lieu(s.get("from")),
                     "de_point": _point_lieu(s.get("from")),
+                    "vers_point": _point_lieu(s.get("to")),
                     "route_id": next((l.get("id") for l in s.get("links", []) or [] if l.get("type") == "route"), None),
                     "depart": s.get("departure_date_time"),
                 }
@@ -420,7 +421,7 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                 etapes.append(
                     {
                         "type": "transport",
-                        **{k: section[k] for k in ("nom", "mode", "couleur", "couleur_texte", "direction", "de", "vers", "ligne_id", "de_point", "route_id")},
+                        **{k: section[k] for k in ("nom", "code", "mode", "couleur", "couleur_texte", "direction", "de", "vers", "ligne_id", "de_point", "vers_point", "route_id")},
                         "depart_brut": s.get("departure_date_time"),
                         "depart": heure_navitia(s.get("departure_date_time")),
                         "arrivee": heure_navitia(s.get("arrival_date_time")),
@@ -431,11 +432,14 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                 duree = _minutes(s.get("duration"))
                 if not duree:
                     continue
+                rues = [p.get("name") for p in s.get("path", []) or [] if p.get("name")][:3]
                 if etapes and etapes[-1]["type"] == "marche":
                     etapes[-1]["duree"] += duree
                     etapes[-1]["vers"] = vers
                 else:
                     etapes.append({"type": "marche", "duree": duree, "vers": vers})
+                    if rues:
+                        etapes[-1]["rues"] = rues
         for n, e in enumerate(etapes[:-1]):
             if e["type"] == "marche" and not e.get("vers") and etapes[n + 1]["type"] == "transport":
                 e["vers"] = etapes[n + 1].get("de")
