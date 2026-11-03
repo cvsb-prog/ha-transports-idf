@@ -465,14 +465,13 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                     etapes.append({"type": "marche", "duree": duree, "vers": vers})
                     if rues:
                         etapes[-1]["rues"] = rues
+                    if de := _coord_lieu(s.get("from")):
+                        etapes[-1]["de_coord"] = de
                 if coord := _coord_lieu(s.get("to")):
                     etapes[-1]["vers_coord"] = coord
         for n, e in enumerate(etapes[:-1]):
             if e["type"] == "marche" and not e.get("vers") and etapes[n + 1]["type"] == "transport":
                 e["vers"] = etapes[n + 1].get("de")
-        # La dernière marche mène à la destination : son nom n'apporte rien.
-        if etapes and etapes[-1]["type"] == "marche" and len(etapes) > 1:
-            etapes[-1]["vers"] = None
         sortie.append(
             {
                 "duree": j.get("duration"),
