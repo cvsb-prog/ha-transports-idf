@@ -5,7 +5,7 @@
  * à l'intérieur, propositions et alertes sont repliées ; les gares se replient d'un clic.
  * Passages : vert = atteignable (départ ≥ marche + marge), orange = en se pressant, gris = trop tard.
  */
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },
@@ -404,9 +404,23 @@ class TransportsIdfCard extends HTMLElement {
         return `<li><span class="h">${echapper(e.depart || "")}</span>${this._logo(e, { glyphe: false, alerte: e.alerte })}
           <span class="trajet-ligne"><span>${echapper(e.de)} → ${echapper(e.vers)}</span>
           <span class="sous">${e.direction ? `dir. ${echapper(e.direction)} · ` : ""}arr. ${echapper(e.arrivee || "?")}</span>
-          <span class="sous">${suivants}${alerte}</span></span></li>`;
+          <span class="sous">${suivants}${alerte}</span>${this._rame(e.rame)}</span></li>`;
       })
       .join("")}</ol>`;
+  }
+
+  _rame(r) {
+    if (!r?.voitures) return "";
+    // Rame dessinée dans le sens de la marche (l'avant à droite), voiture conseillée en couleur.
+    const voitures = Array.from({ length: r.voitures }, (_, i) => r.voitures - i)
+      .map((v) => `<span class="voiture${v === r.voiture ? " ici" : ""}"></span>`).join("");
+    const ou = { avant: "à l'avant", milieu: "au milieu", arriere: "à l'arrière" }[r.zone] || "";
+    const vers = r.type === "sortie"
+      ? `sortie ${echapper(r.vers)}`
+      : `correspondance ${echapper([r.mode_suivant, r.ligne_suivante].filter(Boolean).join(" "))}`;
+    const equipement = r.equipement ? ` · ${echapper(r.equipement.toLowerCase())}` : "";
+    return `<span class="rame-ligne"><span class="rame" title="Sens de la marche →">${voitures}<span class="nez">▸</span></span>
+      <span>Monte ${ou} (voiture ${r.voiture}/${r.voitures}) → ${vers}${equipement}</span></span>`;
   }
 
   // ---- Sections ------------------------------------------------------------
@@ -810,6 +824,11 @@ class TransportsIdfCard extends HTMLElement {
       .etapes .h { font-weight: 600; font-variant-numeric: tabular-nums; }
       .trajet-ligne { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
       .suivants { margin-right: 6px; }
+      .rame-ligne { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: .85em; margin-top: 2px; }
+      .rame { display: inline-flex; align-items: center; gap: 2px; }
+      .voiture { width: 11px; height: 7px; border-radius: 2px; border: 1px solid var(--secondary-text-color); opacity: .55; }
+      .voiture.ici { background: var(--primary-color); border-color: var(--primary-color); opacity: 1; }
+      .nez { font-size: .8em; color: var(--secondary-text-color); margin-left: 1px; }
 
       /* Info trafic */
       .section { background: var(--ti-fond); border-radius: 10px; padding: 4px 12px; }

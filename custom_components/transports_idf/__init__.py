@@ -33,6 +33,7 @@ from .coordinator import (
     TraficCoordinator,
     coordonnees_zone,
 )
+from .rame import PositionRame
 
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -147,6 +148,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: TransportsConfigEntry) -
     info = InfoTraficCoordinator(hass, entry, client)
     trafic = TraficCoordinator(hass, entry, client, calcul)
     calcul.niveau_ligne = info.niveau_ligne
+    calcul.rame = PositionRame(hass)
+    await calcul.rame.async_charger()
     await passages.async_config_entry_first_refresh()
     await info.async_config_entry_first_refresh()
     await trafic.async_config_entry_first_refresh()
