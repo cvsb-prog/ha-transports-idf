@@ -3,6 +3,13 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.5.1] - 2026-11-03
+
+### Ajouté
+
+- Sortie conseillée (numéro et nom) d'après le référentiel IDFM des accès : la plus proche de la fin du trajet à pied.
+- Mise à jour mensuelle des deux jeux de données (la copie livrée sert de secours).
+
 ## [0.5.0] - 2026-11-03
 
 ### Ajouté
