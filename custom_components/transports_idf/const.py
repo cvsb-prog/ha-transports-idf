@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "transports_idf"
 NOM = "Transports IDF"
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 BASE_URL = "https://prim.iledefrance-mobilites.fr/marketplace"
 NAVITIA = f"{BASE_URL}/v2/navitia"
@@ -21,6 +21,7 @@ OPT_DEBUT_NUIT = "debut_nuit"
 OPT_FIN_NUIT = "fin_nuit"
 OPT_NB_PASSAGES = "nb_passages"
 OPT_IGNORER_INFO = "ignorer_information"
+OPT_LIGNES_INTERET = "lignes_interet"  # [{id, code, nom, mode, couleur, couleur_texte}]
 
 DEFAUTS = {
     OPT_MARGE: 2,
@@ -30,6 +31,7 @@ DEFAUTS = {
     OPT_FIN_NUIT: "05:00:00",
     OPT_NB_PASSAGES: 6,
     OPT_IGNORER_INFO: True,
+    "lignes_interet": [],
 }
 
 # Sous-entrées
@@ -62,6 +64,9 @@ T_DUREE = "duree"  # secondes
 T_AVANCE = "avance"  # minutes de veille avant le départ
 T_SECTIONS = "sections"  # [{ligne_id, code, mode, couleur, de, vers, direction}]
 T_RESUME = "resume"
+T_ETAPES = "etapes"  # étapes de l'itinéraire choisi (résumé replié de la carte)
+T_ORIGINE_ID = "origine_id"  # lieu Navitia (adresse, arrêt…) si le départ n'est pas une zone
+T_ORIGINE_NOM = "origine_nom"
 
 # Écart à partir duquel on conseille de partir plus tôt / un autre itinéraire
 ECART_MINUTES = 3
@@ -77,3 +82,11 @@ ETAT_TROP_TARD = "trop_tard"
 EFFETS_INFO = {"OTHER_EFFECT", "UNKNOWN_EFFECT", "ADDITIONAL_SERVICE"}
 # Effets qui justifient d'éviter la ligne dans un itinéraire de rechange
 EFFETS_BLOQUANTS = {"NO_SERVICE", "REDUCED_SERVICE", "SIGNIFICANT_DELAYS"}
+
+# Lignes de base du panneau info trafic (comme les écrans en gare), par groupe d'affichage.
+LIGNES_BASE = {
+    "RER": ["A", "B", "C", "D", "E"],
+    "Train": ["H", "J", "K", "L", "N", "P", "R", "U", "V"],
+    "Métro": ["1", "2", "3", "3B", "4", "5", "6", "7", "7B", "8", "9", "10", "11", "12", "13", "14"],
+    "Tram": ["T1", "T2", "T3A", "T3B", "T4", "T5", "T6", "T7", "T8", "T9", "T10", "T11", "T12", "T13", "T14"],
+}

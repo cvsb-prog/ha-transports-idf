@@ -32,6 +32,13 @@
   "options": {
     "step": {
       "init": {
+        "title": "Transports IDF",
+        "menu_options": {
+          "reglages": "Réglages généraux",
+          "lignes": "Lignes d'intérêt (info trafic)"
+        }
+      },
+      "reglages": {
         "title": "Réglages généraux",
         "data": {
           "zone": "Point de départ (zone)",
@@ -47,7 +54,25 @@
           "marge": "Un passage est « atteignable » si son départ est dans au moins (temps de marche + marge), « en se pressant » s'il reste au moins le temps de marche, sinon « trop tard ».",
           "ignorer_information": "Les trajets ne passent en « perturbé » que pour un vrai impact (interruption, retards, déviation…)."
         }
+      },
+      "lignes": {
+        "title": "Lignes d'intérêt",
+        "description": "Lignes ajoutées au panneau info trafic, en plus des RER, Transilien, métros et trams (et des lignes de tes trajets et arrêts, ajoutées d'office). Décoche pour retirer ; tape un numéro ou un nom pour en ajouter.",
+        "data": {
+          "garder": "Lignes suivies",
+          "recherche": "Ajouter une ligne (ex. 192, Noctilien N21…)"
+        }
+      },
+      "lignes_choix": {
+        "title": "Ajouter des lignes",
+        "data": {
+          "lignes": "Lignes trouvées"
+        }
       }
+    },
+    "error": {
+      "injoignable": "PRIM ne répond pas. Réessaie dans un instant.",
+      "aucune_ligne": "Aucune ligne trouvée."
     }
   },
   "config_subentries": {
@@ -123,10 +148,12 @@
             "recherche": "Destination (arrêt, adresse, lieu)",
             "heure_depart": "Heure",
             "avance": "Veille avant le départ habituel",
-            "type_heure": "Cette heure est…"
+            "type_heure": "Cette heure est…",
+            "recherche_depart": "Départ précis (adresse, arrêt) — facultatif"
           },
           "data_description": {
-            "type_heure": "Heure d'arrivée cible : la veille commence avant le départ habituel ; si une perturbation ou un retard oblige à partir plus tôt pour arriver à l'heure, une alerte le dit. Heure de départ : on compare l'arrivée des itinéraires partant à cette heure."
+            "type_heure": "Heure d'arrivée cible : la veille commence avant le départ habituel ; si une perturbation ou un retard oblige à partir plus tôt pour arriver à l'heure, une alerte le dit. Heure de départ : on compare l'arrivée des itinéraires partant à cette heure.",
+            "recherche_depart": "Laisse vide pour partir de la zone choisie au-dessus."
           }
         },
         "destination": {
@@ -157,6 +184,12 @@
           "data_description": {
             "type_heure": "Heure d'arrivée cible : la veille commence avant le départ habituel ; si une perturbation ou un retard oblige à partir plus tôt pour arriver à l'heure, une alerte le dit. Heure de départ : on compare l'arrivée des itinéraires partant à cette heure."
           }
+        },
+        "depart": {
+          "title": "Choisir le départ",
+          "data": {
+            "depart": "Départ"
+          }
         }
       },
       "error": {
@@ -176,6 +209,9 @@
     "sensor": {
       "passages": {
         "name": "Prochain départ atteignable"
+      },
+      "info_trafic": {
+        "name": "Info trafic"
       }
     },
     "binary_sensor": {
@@ -192,6 +228,38 @@
         "trajet": {
           "name": "Trajet",
           "description": "Capteur « Perturbation » du trajet."
+        }
+      }
+    },
+    "rechercher_lieu": {
+      "name": "Rechercher un lieu",
+      "description": "Adresses, arrêts et lieux correspondant à un texte (utilisé par la carte).",
+      "fields": {
+        "texte": {
+          "name": "Texte",
+          "description": "Nom d'arrêt, adresse ou lieu."
+        }
+      }
+    },
+    "itineraire": {
+      "name": "Calculer un itinéraire",
+      "description": "Itinéraires détaillés vers un lieu (étapes, départs suivants, alertes), au départ de la maison par défaut.",
+      "fields": {
+        "arrivee": {
+          "name": "Arrivée",
+          "description": "Identifiant de lieu renvoyé par « Rechercher un lieu »."
+        },
+        "depart": {
+          "name": "Départ",
+          "description": "Identifiant de lieu ou zone (zone.xxx). Par défaut : zone de l'intégration."
+        },
+        "heure": {
+          "name": "Heure",
+          "description": "Par défaut : maintenant."
+        },
+        "type_heure": {
+          "name": "Type d'heure",
+          "description": "depart ou arrivee."
         }
       }
     }

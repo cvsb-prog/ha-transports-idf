@@ -6,3 +6,28 @@ partir_maintenant:
         entity:
           integration: transports_idf
           domain: binary_sensor
+rechercher_lieu:
+  fields:
+    texte:
+      required: true
+      selector:
+        text:
+itineraire:
+  fields:
+    arrivee:
+      required: true
+      selector:
+        text:
+    depart:
+      selector:
+        text:
+    heure:
+      selector:
+        time:
+    type_heure:
+      default: depart
+      selector:
+        select:
+          options:
+            - depart
+            - arrivee
