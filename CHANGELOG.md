@@ -3,6 +3,16 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.7.1] - 2026-11-04
+
+### Ajouté
+
+- Écart affiché entre propositions (« part 5 min plus tard », « 3 min plus rapide »).
+
+### Modifié
+
+- Pictogramme « temps réel » redessiné.
+
 ## [0.7.0] - 2026-11-04
 
 ### Modifié
