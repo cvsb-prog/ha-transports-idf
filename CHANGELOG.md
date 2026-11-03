@@ -3,6 +3,14 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.4.0] - 2026-11-03
+
+### Ajouté
+
+- Options : zone de départ, marge « en se pressant », nombre de passages, rafraîchissement jour / nuit, messages d'information ignorés.
+- Lignes d'intérêt suivies dans l'info trafic.
+- Carte en 4 sections repliables (recherche, trajets, info trafic, arrêts).
+
 ## [0.3.0] - 2026-11-02
 
 ### Ajouté

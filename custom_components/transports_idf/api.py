@@ -6,11 +6,11 @@ Les fonctions `analyser_*` sont pures (sans réseau) pour être testées à part
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
 import html
 import logging
 import math
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 
@@ -119,6 +119,48 @@ class ClientPrim:
     async def perturbations_ligne(self, ligne_id: str) -> list[dict[str, Any]]:
         url = f"{NAVITIA}/line_reports/lines/{quote(ligne_id)}/line_reports"
         return analyser_perturbations(await self._get(url, [("count", "100")]))
+
+    async def lignes_reseau(self) -> list[dict[str, Any]]:
+        """Toutes les lignes hors bus (RER, Transilien, métro, tram…), avec code et couleurs."""
+        params = [("count", "1000"), ("depth", "1"), ("forbidden_uris[]", "physical_mode:Bus")]
+        return analyser_lignes(await self._get(f"{NAVITIA}/lines", params))
+
+    async def chercher_lignes(self, texte: str) -> list[dict[str, Any]]:
+        donnees = await self._get(f"{NAVITIA}/pt_objects", [("q", texte), ("type[]", "line"), ("count", "20")])
+        lignes = [o.get("line") for o in (donnees or {}).get("pt_objects", []) if o.get("embedded_type") == "line"]
+        return analyser_lignes({"lines": [l for l in lignes if l]})
+
+    async def perturbations_reseau(self, pages_max: int = 5) -> tuple[list[dict[str, Any]], dict[str, set[str]]]:
+        """Info trafic de tout le réseau hors bus (paginé par 100) → perturbations et lignes touchées."""
+        url = f"{NAVITIA}/line_reports/line_reports"
+        fusion: dict[str, list] = {"disruptions": [], "line_reports": []}
+        for page in range(pages_max):
+            params = [("count", "100"), ("start_page", str(page)), ("forbidden_uris[]", "physical_mode:Bus")]
+            donnees = await self._get(url, params) or {}
+            fusion["disruptions"] += donnees.get("disruptions", []) or []
+            fusion["line_reports"] += donnees.get("line_reports", []) or []
+            pagination = donnees.get("pagination") or {}
+            total, par_page = pagination.get("total_result"), pagination.get("items_per_page") or 100
+            if not isinstance(total, int) or (page + 1) * par_page >= total:
+                break
+        return analyser_perturbations(fusion), lignes_touchees(fusion)
+
+    async def departs_route(self, point: str, route: str, depuis: datetime, nombre: int = 4) -> list[datetime]:
+        """Prochains départs (temps réel si disponible) d'une route à un point d'arrêt."""
+        url = f"{NAVITIA}/stop_points/{quote(point)}/routes/{quote(route)}/departures"
+        params = [
+            ("from_datetime", (depuis - timedelta(minutes=1)).strftime("%Y%m%dT%H%M%S")),
+            ("count", str(nombre)),
+            ("data_freshness", "realtime"),
+        ]
+        donnees = await self._get(url, params) or {}
+        sortie = []
+        for d in donnees.get("departures", []) or []:
+            sdt = d.get("stop_date_time") or {}
+            t = date_navitia(sdt.get("departure_date_time") or sdt.get("arrival_date_time"))
+            if t:
+                sortie.append(t)
+        return sorted(sortie)
 
 
 # ---- Identifiants ---------------------------------------------------------
@@ -255,6 +297,7 @@ def analyser_lignes(donnees: Any) -> list[dict[str, Any]]:
                 "nom": ligne.get("code") or ligne.get("name"),
                 "nom_long": ligne.get("name"),
                 "mode": (ligne.get("commercial_mode") or {}).get("name") or (modes[0].get("name") if modes else None),
+                "mode_physique": modes[0].get("id") if modes else None,
                 "couleur": _couleur(ligne.get("color")),
                 "couleur_texte": _couleur(ligne.get("text_color")),
             }
@@ -285,6 +328,56 @@ def _zone_lieu(lieu: Any) -> str | None:
     if lieu.get("embedded_type") == "stop_area":
         return lieu.get("id")
     return ((lieu.get("stop_point") or {}).get("stop_area") or {}).get("id")
+
+
+def _point_lieu(lieu: Any) -> str | None:
+    if not isinstance(lieu, dict):
+        return None
+    if lieu.get("embedded_type") == "stop_point":
+        return lieu.get("id")
+    return None
+
+
+def lignes_touchees(donnees: Any) -> dict[str, set[str]]:
+    """line_reports → {id de ligne : ids des perturbations qui la touchent}."""
+    sortie: dict[str, set[str]] = {}
+
+    def liens(objet: Any) -> set[str]:
+        return {l.get("id") for l in (objet or {}).get("links", []) or [] if l.get("type") == "disruption" and l.get("id")}
+
+    for rapport in (donnees or {}).get("line_reports", []) or []:
+        ligne = rapport.get("line") or {}
+        if not ligne.get("id"):
+            continue
+        ids = liens(ligne)
+        for po in rapport.get("pt_objects", []) or []:
+            ids |= liens(po) | liens(po.get(po.get("embedded_type") or "") or {})
+        sortie.setdefault(ligne["id"], set()).update(ids)
+    for d in (donnees or {}).get("disruptions", []) or []:
+        for o in d.get("impacted_objects", []) or []:
+            po = o.get("pt_object") or {}
+            if po.get("embedded_type") == "line" and po.get("id") and d.get("id"):
+                sortie.setdefault(po["id"], set()).add(d["id"])
+    return sortie
+
+
+def niveau_perturbation(p: dict[str, Any]) -> str | None:
+    """interrompu / perturbe / travaux, ou None pour une simple information."""
+    effet = p.get("effet") or "UNKNOWN_EFFECT"
+    travaux = "travaux" in f"{p.get('cause') or ''} {p.get('titre') or ''}".lower() or "works" in (p.get("cause") or "").lower()
+    if effet == "NO_SERVICE" or (p.get("gravite") or "").lower().startswith("bloquant"):
+        return "interrompu"
+    if effet not in EFFETS_INFO:
+        return "perturbe"
+    return "travaux" if travaux else None
+
+
+ORDRE_NIVEAUX = {"interrompu": 3, "perturbe": 2, "travaux": 1, None: 0, "normal": 0}
+
+
+def pire_niveau(niveaux: Any) -> str:
+    pire = max(niveaux, key=lambda n: ORDRE_NIVEAUX.get(n, 0), default=None)
+    return pire if pire in ("interrompu", "perturbe", "travaux") else "normal"
 
 
 def heure_navitia(x: Any) -> str | None:
@@ -319,13 +412,16 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                     "de": (s.get("from") or {}).get("name"),
                     "vers": vers,
                     "de_id": _zone_lieu(s.get("from")),
+                    "de_point": _point_lieu(s.get("from")),
+                    "route_id": next((l.get("id") for l in s.get("links", []) or [] if l.get("type") == "route"), None),
                     "depart": s.get("departure_date_time"),
                 }
                 sections.append(section)
                 etapes.append(
                     {
                         "type": "transport",
-                        **{k: section[k] for k in ("nom", "mode", "couleur", "couleur_texte", "direction", "de", "vers", "ligne_id")},
+                        **{k: section[k] for k in ("nom", "mode", "couleur", "couleur_texte", "direction", "de", "vers", "ligne_id", "de_point", "route_id")},
+                        "depart_brut": s.get("departure_date_time"),
                         "depart": heure_navitia(s.get("departure_date_time")),
                         "arrivee": heure_navitia(s.get("arrival_date_time")),
                         "temps_reel": (s.get("data_freshness") or "realtime") == "realtime",

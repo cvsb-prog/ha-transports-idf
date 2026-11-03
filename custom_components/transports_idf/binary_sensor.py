@@ -4,17 +4,37 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-
-from . import TransportsConfigEntry
-from .const import SOUS_TRAJET, T_AVANCE, T_DEST_NOM, T_HEURE, T_NOM, T_TYPE_HEURE, T_ORIGINE, T_PERSONNE, T_RESUME, T_SECTIONS
 from homeassistant.util import dt as dt_util
 
-from .coordinator import DUREE_MAINTENANT, EtatTrajet, TraficCoordinator, depart_habituel
+from . import TransportsConfigEntry
+from .api import pire_niveau
+from .const import (
+    SOUS_TRAJET,
+    T_AVANCE,
+    T_DEST_NOM,
+    T_HEURE,
+    T_NOM,
+    T_ORIGINE,
+    T_ORIGINE_NOM,
+    T_PERSONNE,
+    T_RESUME,
+    T_SECTIONS,
+    T_TYPE_HEURE,
+)
+from .coordinator import (
+    DUREE_MAINTENANT,
+    EtatTrajet,
+    TraficCoordinator,
+    depart_habituel,
+)
 from .sensor import appareil
 
 
@@ -31,7 +51,7 @@ class TrajetSensor(CoordinatorEntity[TraficCoordinator], BinarySensorEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "perturbation"
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
-    _unrecorded_attributes = frozenset({"perturbations", "rechange", "sections", "reference", "plus_rapides", "conseil", "maintenant"})
+    _unrecorded_attributes = frozenset({"perturbations", "rechange", "sections", "reference", "alternatives", "conseil", "maintenant", "etapes_habituelles"})
 
     def __init__(self, coord: TraficCoordinator, sous: ConfigSubentry) -> None:
         super().__init__(coord)
@@ -50,6 +70,10 @@ class TrajetSensor(CoordinatorEntity[TraficCoordinator], BinarySensorEntity):
     @property
     def icon(self) -> str:
         return "mdi:alert-octagon" if self.is_on else "mdi:transit-connection-variant"
+
+    def _nom_zone(self, zone: str | None) -> str | None:
+        etat = self.hass.states.get(zone) if zone else None
+        return etat.name if etat else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -75,5 +99,8 @@ class TrajetSensor(CoordinatorEntity[TraficCoordinator], BinarySensorEntity):
             "perturbations": e.perturbations,
             "rechange": e.rechange,
             "reference": e.reference,
-            "plus_rapides": e.plus_rapides,
+            "alternatives": e.alternatives,
+            "origine_nom": d.get(T_ORIGINE_NOM) or self._nom_zone(d.get(T_ORIGINE)),
+            "etapes_habituelles": self.coordinator.etapes_habituelles(self._sous_id),
+            "alerte": pire_niveau(e.niveaux.values()),
         }

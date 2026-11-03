@@ -17,14 +17,14 @@ from . import TransportsConfigEntry
 from .const import (
     A_COMMUNE,
     A_LAT,
-    A_LON,
-    CONF_ZONE,
     A_LIGNES,
     A_LIGNES_SUIVIES,
+    A_LON,
     A_MARCHE,
     A_MARCHE_CALCULE,
     A_NOM,
     A_ZONE_ID,
+    CONF_ZONE,
     DOMAIN,
     ETAT_ATTEIGNABLE,
     NOM,
@@ -33,13 +33,19 @@ from .const import (
     SOUS_ARRET,
     VERSION,
 )
-from .coordinator import PassagesCoordinator, coordonnees_zone, option
+from .coordinator import (
+    InfoTraficCoordinator,
+    PassagesCoordinator,
+    coordonnees_zone,
+    option,
+)
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: TransportsConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     coord = entry.runtime_data.passages
+    async_add_entities([InfoTraficSensor(entry.runtime_data.info, entry.entry_id)])
     for sous in entry.subentries.values():
         if sous.subentry_type == SOUS_ARRET:
             async_add_entities([ArretSensor(coord, sous)], config_subentry_id=sous.subentry_id)
@@ -106,3 +112,28 @@ class ArretSensor(CoordinatorEntity[PassagesCoordinator], SensorEntity):
             "mis_a_jour": dt_util.utcnow().isoformat(),
             "passages": self.coordinator.passages_affiches(self._sous_id),
         }
+
+
+class InfoTraficSensor(CoordinatorEntity[InfoTraficCoordinator], SensorEntity):
+    """État : nombre de lignes affichées (base + intérêt) non normales ; détail par ligne en attributs."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "info_trafic"
+    _attr_icon = "mdi:subway-alert-variant"
+    _unrecorded_attributes = frozenset({"lignes"})
+
+    def __init__(self, coord: InfoTraficCoordinator, entry_id: str) -> None:
+        super().__init__(coord)
+        self._attr_unique_id = f"{entry_id}_info_trafic"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry_id)}, name="Réseau Île-de-France", manufacturer=NOM, model="Info trafic",
+            sw_version=VERSION, entry_type=DeviceEntryType.SERVICE,
+        )
+
+    @property
+    def native_value(self) -> int:
+        return sum(1 for l in self.coordinator.data or [] if (l.get("base") or l.get("interet")) and l["etat"] != "normal")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"type_transports_idf": "info_trafic", "lignes": self.coordinator.data or [], "mis_a_jour": dt_util.utcnow().isoformat()}
