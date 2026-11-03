@@ -21,6 +21,7 @@ from .api import (
     date_navitia,
     niveau_perturbation,
     pire_niveau,
+    refs_candidates,
 )
 from .const import (
     A_LIGNES,
@@ -265,6 +266,7 @@ class Itineraires:
                     continue
                 cibles.append((e, cle, vise))
                 taches.append(self.client.departs_route(e["de_point"], e["route_id"], vise))
+        await self._voies(its)
         if not taches:
             return
         for (e, cle, vise), r in zip(cibles, await asyncio.gather(*taches, return_exceptions=True), strict=True):
@@ -275,6 +277,31 @@ class Itineraires:
             e["suivants"] = _ecarts(vise, r)
         if len(self._cache) > 300:
             self._cache.clear()
+
+    async def _voies(self, its: list[dict[str, Any]]) -> None:
+        """RER / Transilien : voie et nom de mission du train visé, lus dans les prochains passages en gare."""
+        cibles = []
+        for it in its:
+            for e in it.get("etapes") or []:
+                if e.get("type") != "transport" or not e.get("de_point") or not _ferre(e.get("mode")):
+                    continue
+                vise = date_navitia(e.get("depart_brut"))
+                if vise:
+                    cibles.append((e, vise.replace(tzinfo=dt_util.get_default_time_zone())))
+        if not cibles:
+            return
+        refs = sorted({refs_candidates("", [e["de_point"]])[0] for e, _ in cibles if refs_candidates("", [e["de_point"]])})
+        reponses = dict(zip(refs, await asyncio.gather(*(self.client.passages(r) for r in refs), return_exceptions=True), strict=True))
+        for e, vise in cibles:
+            refs_e = refs_candidates("", [e["de_point"]])
+            passages = reponses.get(refs_e[0]) if refs_e else None
+            if not isinstance(passages, list):
+                continue
+            proches = [p for p in passages if p["ligne"] == e.get("code") and abs((p["depart"] - vise).total_seconds()) <= 150]
+            if proches:
+                p = min(proches, key=lambda p: abs((p["depart"] - vise).total_seconds()))
+                e["voie"] = p.get("quai") or e.get("voie")
+                e["mission"] = e.get("mission") or (p.get("mission") if p.get("mission") and len(p["mission"]) == 4 else None)
 
     def alertes(self, its: list[dict[str, Any]], niveaux: dict[str, str]) -> None:
         """État des lignes de chaque étape, et où monter dans la rame quand on le sait."""
@@ -290,6 +317,11 @@ class Itineraires:
                     marche = suite[0] if suite and suite[0].get("type") == "marche" else None
                     e["rame"] = self.rame.conseil(e, suivante, None if suivante else marche)
             it["alerte"] = pire_niveau(e.get("alerte") for e in it.get("etapes") or [])
+
+
+def _ferre(mode: Any) -> bool:
+    m = str(mode or "").lower()
+    return "rer" in m or "train" in m or "transilien" in m
 
 
 def _ecarts(vise: datetime, departs: list[datetime]) -> list[int]:
