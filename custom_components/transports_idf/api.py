@@ -330,6 +330,18 @@ def _zone_lieu(lieu: Any) -> str | None:
     return ((lieu.get("stop_point") or {}).get("stop_area") or {}).get("id")
 
 
+def _coord_lieu(lieu: Any) -> list[float] | None:
+    """[lat, lon] d'un lieu Navitia (adresse, arrêt, lieu…)."""
+    if not isinstance(lieu, dict):
+        return None
+    objet = lieu.get(lieu.get("embedded_type") or "") or lieu
+    coord = objet.get("coord") or lieu.get("coord") or {}
+    try:
+        return [float(coord["lat"]), float(coord["lon"])]
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _point_lieu(lieu: Any) -> str | None:
     if not isinstance(lieu, dict):
         return None
@@ -440,6 +452,8 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                     etapes.append({"type": "marche", "duree": duree, "vers": vers})
                     if rues:
                         etapes[-1]["rues"] = rues
+                if coord := _coord_lieu(s.get("to")):
+                    etapes[-1]["vers_coord"] = coord
         for n, e in enumerate(etapes[:-1]):
             if e["type"] == "marche" and not e.get("vers") and etapes[n + 1]["type"] == "transport":
                 e["vers"] = etapes[n + 1].get("de")
