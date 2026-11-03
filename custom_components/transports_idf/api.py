@@ -330,6 +330,18 @@ def _zone_lieu(lieu: Any) -> str | None:
     return ((lieu.get("stop_point") or {}).get("stop_area") or {}).get("id")
 
 
+_MISSION = re.compile(r"^[A-Z]{4}$")
+
+
+def _mission(info: dict[str, Any]) -> str | None:
+    """Nom de mission d'un train RER / Transilien (4 lettres, ex. « TOCA »)."""
+    for cle in ("headsign", "trip_short_name", "name"):
+        valeur = (info.get(cle) or "").strip()
+        if _MISSION.match(valeur):
+            return valeur
+    return None
+
+
 def _coord_lieu(lieu: Any) -> list[float] | None:
     """[lat, lon] d'un lieu Navitia (adresse, arrêt, lieu…)."""
     if not isinstance(lieu, dict):
@@ -435,6 +447,7 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                         "type": "transport",
                         **{k: section[k] for k in ("nom", "code", "mode", "couleur", "couleur_texte", "direction", "de", "vers", "ligne_id", "de_point", "vers_point", "route_id")},
                         "depart_brut": s.get("departure_date_time"),
+                        "mission": _mission(info),
                         "depart": heure_navitia(s.get("departure_date_time")),
                         "arrivee": heure_navitia(s.get("arrival_date_time")),
                         "temps_reel": (s.get("data_freshness") or "realtime") == "realtime",
