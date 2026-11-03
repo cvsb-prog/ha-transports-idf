@@ -5,7 +5,7 @@
  * à l'intérieur, propositions et alertes sont repliées ; les gares se replient d'un clic.
  * Passages : vert = atteignable (départ ≥ marche + marge), orange = en se pressant, gris = trop tard.
  */
-const VERSION = "0.5.0";
+const VERSION = "0.5.1";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },
@@ -416,7 +416,7 @@ class TransportsIdfCard extends HTMLElement {
       .map((v) => `<span class="voiture${v === r.voiture ? " ici" : ""}"></span>`).join("");
     const ou = { avant: "à l'avant", milieu: "au milieu", arriere: "à l'arrière" }[r.zone] || "";
     const vers = r.type === "sortie"
-      ? `sortie ${echapper(r.vers)}`
+      ? `<span class="sortie">${r.numero ? `<b class="num-sortie">${echapper(r.numero)}</b>` : ""}sortie ${echapper(r.nom || r.vers)}</span>`
       : `correspondance ${echapper([r.mode_suivant, r.ligne_suivante].filter(Boolean).join(" "))}`;
     const equipement = r.equipement ? ` · ${echapper(r.equipement.toLowerCase())}` : "";
     return `<span class="rame-ligne"><span class="rame" title="Sens de la marche →">${voitures}<span class="nez">▸</span></span>
@@ -828,6 +828,10 @@ class TransportsIdfCard extends HTMLElement {
       .rame { display: inline-flex; align-items: center; gap: 2px; }
       .voiture { width: 11px; height: 7px; border-radius: 2px; border: 1px solid var(--secondary-text-color); opacity: .55; }
       .voiture.ici { background: var(--primary-color); border-color: var(--primary-color); opacity: 1; }
+      .num-sortie {
+        display: inline-flex; align-items: center; justify-content: center; min-width: 1.4em; height: 1.4em; margin-right: 4px;
+        border-radius: 3px; background: #ffd400; color: #000; font-size: .9em;
+      }
       .nez { font-size: .8em; color: var(--secondary-text-color); margin-left: 1px; }
 
       /* Info trafic */
