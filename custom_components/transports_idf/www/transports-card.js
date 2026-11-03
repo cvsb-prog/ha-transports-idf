@@ -5,7 +5,7 @@
  * à l'intérieur, propositions et alertes sont repliées ; les gares se replient d'un clic.
  * Passages : vert = atteignable (départ ≥ marche + marge), orange = en se pressant, gris = trop tard.
  */
-const VERSION = "0.7.0";
+const VERSION = "0.7.1";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },
@@ -35,7 +35,7 @@ const NIVEAUX = { interrompu: 3, perturbe: 2, travaux: 1 };
 const PASTILLE = { interrompu: "✕", perturbe: "!", travaux: "⚒" };
 const LIBELLE_NIVEAU = { interrompu: "trafic interrompu", perturbe: "trafic perturbé", travaux: "travaux" };
 // Ondes « temps réel » (comme dans les applis de transport).
-const ONDES = `<svg class="ondes" viewBox="0 0 12 12" aria-label="temps réel"><path d="M2 10a8 8 0 0 1 8-8" /><path d="M2 10a4.5 4.5 0 0 1 4.5-4.5" /></svg>`;
+const ONDES = `<svg class="ondes" viewBox="0 0 14 14" aria-label="temps réel"><circle cx="3" cy="11" r="1.7" /><path d="M3 6.5a4.5 4.5 0 0 1 4.5 4.5" /><path d="M3 2a9 9 0 0 1 9 9" /></svg>`;
 
 const echapper = (t) =>
   String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -394,9 +394,9 @@ class TransportsIdfCard extends HTMLElement {
     return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")}` : `${m} min`;
   }
 
-  _resumeIt(it, intitule = "") {
-    return `${intitule ? `<span class="intitule">${intitule}</span>` : ""}<span class="duree">${this._duree(it)}</span>
-      <span class="horaires">${echapper(it.depart_h || "")}${it.arrivee_h ? ` – ${echapper(it.arrivee_h)}` : ""}</span>
+  _resumeIt(it, note = "") {
+    return `<span class="duree">${this._duree(it)}</span>
+      <span class="horaires">${echapper(it.depart_h || "")}${it.arrivee_h ? ` – ${echapper(it.arrivee_h)}` : ""}</span>${note}
       <span class="chaine">${this._chaine(it.etapes)}</span>`;
   }
 
@@ -517,28 +517,32 @@ class TransportsIdfCard extends HTMLElement {
     const bouton = `<button class="partir" type="button" data-partir="${echapper(id)}"${this._enCours.has(id) ? " disabled" : ""}>${this._enCours.has(id) ? "Calcul…" : "🚶 Partir maintenant"}</button>`;
     corps.push(`<div class="actions">${bouton}${this._erreurs.has(id) ? `<span class="erreur">${echapper(this._erreurs.get(id))}</span>` : ""}</div>`);
     const vus = new Set();
-    const prop = (it, cle, intitule, classe = "proposition") => {
+    const prop = (it, cle, note = "", classe = "proposition") => {
       if (!it?.etapes?.length) return;
       const sig = `${it.depart}|${it.resume}`;
       if (vus.has(sig)) return;
       vus.add(sig);
       const cleP = `${id}|${cle}`;
-      corps.push(this._pli(cleP, false, this._resumeIt(it, intitule), this._etapes(it), classe, this._ouvert(cleP, false) ? "" : this._messageSi(it.etapes)));
+      corps.push(this._pli(cleP, false, this._resumeIt(it, note), this._etapes(it), classe, this._ouvert(cleP, false) ? "" : this._messageSi(it.etapes)));
+    };
+    const ecartHtml = (g) => {
+      if (g == null || g === 0) return "";
+      const t = arrivee ? (g > 0 ? `part ${g} min plus tard` : `part ${-g} min plus tôt`) : g > 0 ? `${g} min plus rapide` : `${-g} min plus long`;
+      return `<span class="ecart${g > 0 ? " mieux" : ""}">${t}</span>`;
     };
     if (maintenant) {
-      (maintenant.itineraires || []).forEach((it, n) => prop(it, `m${n}`, n === 0 ? "Maintenant" : "Ou", "proposition maintenant"));
+      (maintenant.itineraires || []).forEach((it, n) => prop(it, `m${n}`, n === 0 ? `<span class="ecart maintenant">maintenant</span>` : "", "proposition maintenant"));
       if (!(maintenant.itineraires || []).length) corps.push(`<div class="sous">Aucun itinéraire au départ de maintenant.</div>`);
     }
     if (enVeille || s.state === "on") {
-      if (ref) prop(ref, "ref", "Préféré", "proposition prefere");
+      if (ref) prop(ref, "ref", "", "proposition prefere");
       else if (s.state === "on") corps.push(`<div class="sous">Itinéraire préféré indisponible pour l'instant.</div>`);
-      if (arrivee && c && !c.impossible && !c.habituel) prop(c, "conseil", "À prendre");
-      if (a.rechange?.etapes?.length) prop(a.rechange, "rechange", "Rechange");
-      for (const [n, it] of (a.alternatives || []).entries()) {
-        const g = it.gain;
-        const ecart = g == null || g === 0 ? "" : arrivee ? (g > 0 ? `part ${g} min plus tard` : `part ${-g} min plus tôt`) : g > 0 ? `${g} min plus rapide` : `${-g} min plus long`;
-        prop(it, `alt${n}`, `Alternatif${ecart ? ` <span class="ecart${g > 0 ? " mieux" : ""}">${ecart}</span>` : ""}`, `proposition${it.plus_rapide ? " mieux" : ""}`);
-      }
+      const avant = corps.length;
+      if (arrivee && c && !c.impossible && !c.habituel) prop(c, "conseil", `<span class="ecart mieux">à prendre</span>`);
+      if (a.rechange?.etapes?.length) prop(a.rechange, "rechange", `<span class="ecart">rechange</span>`);
+      for (const [n, it] of (a.alternatives || []).entries()) prop(it, `alt${n}`, ecartHtml(it.gain), `proposition${it.plus_rapide ? " mieux" : ""}`);
+      // Les autres itinéraires, un peu détachés du préféré.
+      if (corps.length > avant) corps.splice(avant, 0, `<div class="separation" aria-hidden="true"></div>`);
     }
     if (!enVeille && s.state !== "on" && !maintenant) corps.push(`<div class="sous">Propositions en direct pendant la veille (à partir de ${heureCourte(a.depart_habituel)} moins ${a.avance} min), ou avec « Partir maintenant ».</div>`);
     return this._pli(`${id}|trajet`, enVeille, tete, corps.join(""), `trajet ${classe}`, ouvert ? "" : this._messageSi(etapes));
@@ -895,6 +899,10 @@ class TransportsIdfCard extends HTMLElement {
       .mini-carte { font-size: .85em; opacity: .7; }
       .carte-marche { display: grid; grid-template-columns: 4.2em minmax(0, 1fr); }
       .carte-marche .plan iframe { height: 180px; }
+      .separation { margin: 8px 0 4px; border-top: 2px solid var(--ti-trait); }
+      .separation + .proposition { border-top: 0; }
+      .proposition.prefere { border-top: 0; }
+      .ecart.maintenant { color: var(--primary-color); font-weight: 600; }
       .ecart { font-weight: 400; font-size: .85em; color: var(--secondary-text-color); }
       .ecart.mieux { color: var(--ti-atteignable); font-weight: 600; }
       .intitule { min-width: 0 !important; }
@@ -930,7 +938,8 @@ class TransportsIdfCard extends HTMLElement {
       .temps { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
       .temps .unite { font-weight: 400; font-size: .8em; color: var(--secondary-text-color); }
       .temps.theorique .n { font-weight: 500; }
-      .ondes { width: 11px; height: 11px; vertical-align: -1px; fill: none; stroke: #f2b600; stroke-width: 2; stroke-linecap: round; margin-right: 2px; }
+      .ondes { width: 12px; height: 12px; vertical-align: -1px; fill: none; stroke: #f2b600; stroke-width: 2.2; stroke-linecap: round; margin-right: 3px; }
+      .ondes circle { fill: #f2b600; stroke: none; }
       .n.atteignable { color: var(--ti-atteignable); }
       .n.presse { color: var(--ti-presse); }
       .n.trop_tard { color: var(--ti-trop-tard); font-weight: 400; }
