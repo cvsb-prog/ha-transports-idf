@@ -315,7 +315,7 @@ class Itineraires:
                     suite = etapes[n + 1 :]
                     suivante = next((x for x in suite if x.get("type") == "transport"), None)
                     marche = suite[0] if suite and suite[0].get("type") == "marche" else None
-                    e["rame"] = self.rame.conseil(e, suivante, None if suivante else marche)
+                    e["rame"] = self.rame.conseil(e, suivante, marche)
             it["alerte"] = pire_niveau(e.get("alerte") for e in it.get("etapes") or [])
 
 
@@ -465,7 +465,7 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
             if cle not in vus:
                 vus.add(cle)
                 tries.append(o)
-        tries = tries[:3]
+        tries = tries[:4]
         self.calcul.alertes(tries, etat.niveaux)
         await self.calcul.suivants(tries)
         etat.maintenant = {"le": dt_util.utcnow().isoformat(), "itineraires": tries, "perturbe": bool(etat.perturbations)}
@@ -520,7 +520,7 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         # Alternatives proposées même quand tout va bien ; « gain » en minutes (négatif = moins bien).
         ref = etat.reference
         etat.alternatives = []
-        for o in autres[:2]:
+        for o in autres[:3]:
             gain = None
             if ref:
                 if arrivee_cible and _depart(o) and _depart(ref):
