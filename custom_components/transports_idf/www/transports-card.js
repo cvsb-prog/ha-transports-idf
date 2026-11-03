@@ -5,7 +5,7 @@
  * à l'intérieur, propositions et alertes sont repliées ; les gares se replient d'un clic.
  * Passages : vert = atteignable (départ ≥ marche + marge), orange = en se pressant, gris = trop tard.
  */
-const VERSION = "0.6.0";
+const VERSION = "0.7.0";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },
@@ -235,6 +235,11 @@ class TransportsIdfCard extends HTMLElement {
       this._ligneInfo = this._ligneInfo === ligne.dataset.ligneInfo ? null : ligne.dataset.ligneInfo;
       return this._rendu();
     }
+    const msg = t.closest?.("[data-ligne-msg]");
+    if (msg) {
+      this._ligneMsg = this._ligneMsg === msg.dataset.ligneMsg ? null : msg.dataset.ligneMsg;
+      return this._rendu();
+    }
     const lieu = t.closest?.("[data-lieu]");
     if (lieu) return this._choisirLieu(lieu.dataset.champ, Number(lieu.dataset.lieu));
     if (t.closest?.("[data-effacer]")) return this._effacerRecherche();
@@ -368,9 +373,11 @@ class TransportsIdfCard extends HTMLElement {
     const niveau = alerte && alerte !== "normal" ? alerte : null;
     const pastille = niveau ? `<span class="pastille ${niveau}" title="${LIBELLE_NIVEAU[niveau]}">${PASTILLE[niveau]}</span>` : "";
     const ident = l.id ?? l.ligne_id;
-    const attrs = cliquable ? ` data-ligne-info="${echapper(ident)}" role="button" tabindex="0" title="Voir l'info trafic"` : "";
+    const attr = cliquable === "info" ? "data-ligne-info" : "data-ligne-msg";
+    const choisi = cliquable && (cliquable === "info" ? this._ligneInfo : this._ligneMsg) === ident;
+    const attrs = cliquable ? ` ${attr}="${echapper(ident)}" role="button" tabindex="0" title="Voir l'info trafic"` : "";
     const long = String(code).length > 2 ? " long" : "";
-    return `${g}<span class="logo f-${norm(groupe)}${long}${niveau ? ` a-${niveau}` : ""}${cliquable && this._ligneInfo === ident ? " choisi" : ""}" style="--c:${echapper(fond)};--t:${echapper(texte)}"${attrs}>${echapper(code)}${pastille}</span>`;
+    return `${g}<span class="logo f-${norm(groupe)}${long}${niveau ? ` a-${niveau}` : ""}${choisi ? " choisi" : ""}" style="--c:${echapper(fond)};--t:${echapper(texte)}"${attrs}>${echapper(code)}${pastille}</span>`;
   }
 
   _chaine(etapes, compacte = false) {
@@ -404,7 +411,7 @@ class TransportsIdfCard extends HTMLElement {
 
   // Bloc affiché sous un résumé ou une étape quand on a cliqué sur le logo d'une de ses lignes.
   _messageSi(etapes) {
-    const id = this._ligneInfo;
+    const id = this._ligneMsg;
     const e = id && (etapes || []).find((x) => x.type === "transport" && x.ligne_id === id && x.alerte && x.alerte !== "normal");
     if (!e) return "";
     const ps = this._messagesLigne(id);
@@ -418,8 +425,8 @@ class TransportsIdfCard extends HTMLElement {
     const etapes = it?.etapes || [];
     if (!etapes.length) return `<div class="sous">${echapper(it?.resume || "")}</div>`;
     return `<ol class="etapes">${etapes
-      .map((e) => {
-        if (e.type === "marche") return `<li class="marche"><span class="h"></span><span>🚶 ${echapper(e.duree)} min${e.vers ? ` jusqu'à ${echapper(e.vers)}` : ""}</span></li>`;
+      .map((e, n) => {
+        if (e.type === "marche") return this._marche(e, n === etapes.length - 1);
         const suivants = e.suivants?.length ? `<span class="suivants" title="Départs suivants si tu le rates">+${e.suivants.join(", +")} min</span>` : "";
         const train = [e.voie ? `voie <b>${echapper(e.voie)}</b>` : "", e.mission ? `<b class="mission">${echapper(e.mission)}</b>` : ""].filter(Boolean).join(" · ");
         return `<li><span class="h">${echapper(e.depart || "")}${suivants}</span>${this._logo(e, { alerte: e.alerte, cliquable: !!(e.alerte && e.alerte !== "normal") })}
@@ -430,6 +437,26 @@ class TransportsIdfCard extends HTMLElement {
       .join("")}</ol>`;
   }
 
+  // Marche : la destination n'est utile qu'à la fin (sinon c'est l'arrêt de l'étape suivante).
+  // Un clic ouvre la carte du trajet à pied quand on en connaît les deux bouts.
+  _marche(e, derniere) {
+    const texte = `🚶 ${echapper(e.duree)} min${derniere && e.vers ? ` jusqu'à ${echapper(e.vers)}` : ""}`;
+    const a = e.de_coord, b = e.vers_coord;
+    if (!a || !b) return `<li class="marche"><span class="h"></span><span>${texte}</span></li>`;
+    const cle = `carte|${a.join(",")}|${b.join(",")}`;
+    const ouvert = this._ouvert(cle, false);
+    let carte = "";
+    if (ouvert) {
+      const m = 0.0015;
+      const s = Math.min(a[0], b[0]) - m, n = Math.max(a[0], b[0]) + m;
+      const o = Math.min(a[1], b[1]) - m * 1.5, est = Math.max(a[1], b[1]) + m * 1.5;
+      const url = `https://www.openstreetmap.org/export/embed.html?bbox=${o},${s},${est},${n}&layer=mapnik&marker=${b[0]},${b[1]}`;
+      const pied = `https://www.openstreetmap.org/directions?engine=fossgis_osrm_foot&route=${a[0]}%2C${a[1]}%3B${b[0]}%2C${b[1]}`;
+      carte = `<li class="carte-marche"><span></span><span class="plan"><iframe loading="lazy" referrerpolicy="no-referrer" title="Trajet à pied" src="${echapper(url)}"></iframe><a href="${echapper(pied)}" target="_blank" rel="noopener">Itinéraire à pied détaillé ↗</a></span></li>`;
+    }
+    return `<li class="marche cliquable" data-bascule="${echapper(cle)}" data-defaut="0" role="button" tabindex="0" aria-expanded="${ouvert}"><span class="h"></span><span>${texte} <span class="mini-carte">🗺️</span></span></li>${carte}`;
+  }
+
   _rame(r) {
     if (!r?.voitures) return "";
     // Rame vue de côté, dans le sens de la marche : l'arrière à gauche, la cabine de tête à droite.
@@ -437,12 +464,11 @@ class TransportsIdfCard extends HTMLElement {
       .reverse()
       .map((v) => `<span class="voiture${v === r.voiture ? " ici" : ""}${v === r.voitures ? " queue" : ""}${v === 1 ? " tete" : ""}"><span class="vitre"></span></span>`)
       .join("");
-    const suite = r.type === "sortie"
-      ? `<span class="panneau"><span class="panneau-num">${echapper(r.numero || "?")}</span>${echapper(r.nom || r.vers)}</span>`
-      : `<span class="vers-corresp">↳ ${r.suivante ? this._logo(r.suivante, { glyphe: true }) : echapper([r.mode_suivant, r.ligne_suivante].filter(Boolean).join(" "))}</span>`;
+    const suite = r.type === "sortie" ? `<span class="panneau"><span class="panneau-num">${echapper(r.numero || "?")}</span>${echapper(r.nom || r.vers)}</span>` : "";
     const equipement = r.equipement ? `<span class="sous">${echapper(r.equipement.toLowerCase())}</span>` : "";
     const ou = { avant: "l'avant", milieu: "le milieu", arriere: "l'arrière" }[r.zone] || "";
-    return `<span class="rame-ligne"><span class="rame" title="Monter vers ${ou} du train (voiture ${r.voiture} sur ${r.voitures}) ; sens de la marche vers la droite">${voitures}</span>${suite}${equipement}</span>`;
+    const pour = r.type === "sortie" ? "la sortie" : `la correspondance${r.ligne_suivante ? ` (${[r.mode_suivant, r.ligne_suivante].filter(Boolean).join(" ")})` : ""}`;
+    return `<span class="rame-ligne"><span class="rame" title="Monter vers ${ou} du train (voiture ${r.voiture} sur ${r.voitures}) pour ${echapper(pour)} ; sens de la marche vers la droite">${voitures}</span>${suite}${equipement}</span>`;
   }
 
   // ---- Sections ------------------------------------------------------------
@@ -510,15 +536,9 @@ class TransportsIdfCard extends HTMLElement {
       if (a.rechange?.etapes?.length) prop(a.rechange, "rechange", "Rechange");
       for (const [n, it] of (a.alternatives || []).entries()) {
         const g = it.gain;
-        const libelle = g == null || g === 0 ? "Autre" : arrivee ? (g >= 0 ? `Part ${g} min plus tard` : `Part ${-g} min plus tôt`) : g >= 0 ? `${g} min plus rapide` : `${-g} min plus long`;
-        prop(it, `alt${n}`, libelle, `proposition${it.plus_rapide ? " mieux" : ""}`);
+        const ecart = g == null || g === 0 ? "" : arrivee ? (g > 0 ? `part ${g} min plus tard` : `part ${-g} min plus tôt`) : g > 0 ? `${g} min plus rapide` : `${-g} min plus long`;
+        prop(it, `alt${n}`, `Alternatif${ecart ? ` <span class="ecart${g > 0 ? " mieux" : ""}">${ecart}</span>` : ""}`, `proposition${it.plus_rapide ? " mieux" : ""}`);
       }
-    }
-    for (const p of a.perturbations || []) {
-      const fin = p.fin ? `<div class="sous">Jusqu'au ${echapper(p.fin.slice(6, 8))}/${echapper(p.fin.slice(4, 6))} à ${Number(p.fin.slice(9, 11))} h ${echapper(p.fin.slice(11, 13))}</div>` : "";
-      corps.push(this._pli(`${id}|p|${p.id}`, false,
-        `<span class="etiquette ${p.niveau || "perturbe"}">${PASTILLE[p.niveau] || "!"}</span><span class="alerte-titre">${echapper((p.lignes_trajet || []).join(", "))} — ${echapper(p.titre)}</span>`,
-        `<div class="message">${echapper(p.message || p.titre)}${fin}</div>`, "alerte"));
     }
     if (!enVeille && s.state !== "on" && !maintenant) corps.push(`<div class="sous">Propositions en direct pendant la veille (à partir de ${heureCourte(a.depart_habituel)} moins ${a.avance} min), ou avec « Partir maintenant ».</div>`);
     return this._pli(`${id}|trajet`, enVeille, tete, corps.join(""), `trajet ${classe}`, ouvert ? "" : this._messageSi(etapes));
@@ -534,7 +554,7 @@ class TransportsIdfCard extends HTMLElement {
     const glyphes = { RER: "RER", Train: "TRAIN", "Métro": "M", Tram: "TRAM", "Mes lignes": "★" };
     const grille = rangees
       .filter(([, ls]) => ls.length)
-      .map(([g, ls]) => `<div class="rangee"><span class="glyphe g-${norm(g)}">${glyphes[g]}</span><div class="logos">${ls.map((l) => this._logo(l, { alerte: l.etat, cliquable: true })).join("")}</div></div>`)
+      .map(([g, ls]) => `<div class="rangee"><span class="glyphe g-${norm(g)}">${glyphes[g]}</span><div class="logos">${ls.map((l) => this._logo(l, { alerte: l.etat, cliquable: "info" })).join("")}</div></div>`)
       .join("");
     const touchees = lignes.filter((l) => (l.base || l.interet || mesIds.has(l.id)) && l.etat !== "normal").length;
     const choisie = lignes.find((l) => l.id === this._ligneInfo);
@@ -842,15 +862,15 @@ class TransportsIdfCard extends HTMLElement {
       .alerte-titre { flex: 1; min-width: 0; }
       .message { font-size: .9em; white-space: pre-line; overflow-wrap: anywhere; }
       .etapes { list-style: none; margin: 4px 0 2px; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: .9em; }
-      .etapes li { display: grid; grid-template-columns: 4.2em auto 1fr; align-items: start; gap: 8px; }
-      .etapes li.marche { grid-template-columns: 4.2em 1fr; color: var(--secondary-text-color); }
+      .etapes li { display: grid; grid-template-columns: 4.2em auto minmax(0, 1fr); align-items: start; gap: 8px; }
+      .etapes li.marche { grid-template-columns: 4.2em minmax(0, 1fr); color: var(--secondary-text-color); }
       .etapes .h { font-weight: 600; font-variant-numeric: tabular-nums; display: flex; flex-direction: column; line-height: 1.25; }
       .etapes .h .suivants { font-weight: 400; font-size: .78em; color: var(--secondary-text-color); white-space: nowrap; margin: 0; }
       .trajet-ligne { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
       .suivants { margin-right: 6px; }
       .rame-ligne { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: .85em; margin-top: 4px; }
-      .rame { display: inline-flex; align-items: center; gap: 2px; padding: 3px 4px; border-radius: 4px; background: #1d2654; }
-      .voiture { position: relative; width: 16px; height: 11px; background: #5b6a8f; border-radius: 2px; }
+      .rame { display: inline-flex; align-items: center; gap: 2px; }
+      .voiture { position: relative; width: 16px; height: 11px; background: #8a97b5; border-radius: 2px; }
       .voiture.ici { background: #4caf50; }
       .voiture.queue { border-radius: 6px 2px 2px 6px; }
       .voiture.tete { border-radius: 2px 2px 2px 2px; clip-path: polygon(0 0, 62% 0, 100% 55%, 100% 100%, 0 100%); width: 18px; }
@@ -869,6 +889,15 @@ class TransportsIdfCard extends HTMLElement {
       .msg-ligne.travaux { border-left-color: #757575; background: var(--ti-fond); }
       .etapes .msg-ligne { margin-left: 0; }
       .msg-titre { font-weight: 600; }
+      .marche.cliquable { cursor: pointer; }
+      .etapes li.marche > span:last-child { overflow-wrap: anywhere; min-width: 0; }
+      .marche.cliquable:hover { color: var(--primary-text-color); }
+      .mini-carte { font-size: .85em; opacity: .7; }
+      .carte-marche { display: grid; grid-template-columns: 4.2em minmax(0, 1fr); }
+      .carte-marche .plan iframe { height: 180px; }
+      .ecart { font-weight: 400; font-size: .85em; color: var(--secondary-text-color); }
+      .ecart.mieux { color: var(--ti-atteignable); font-weight: 600; }
+      .intitule { min-width: 0 !important; }
       .nez { font-size: .8em; color: var(--secondary-text-color); margin-left: 1px; }
 
       /* Info trafic */
@@ -886,7 +915,7 @@ class TransportsIdfCard extends HTMLElement {
       .arret-bloc.replie { padding-bottom: 2px; }
       .entete { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: .85em; color: var(--secondary-text-color); padding: 6px 0 4px; }
       .arret { flex: 1; min-width: 0; overflow-wrap: anywhere; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--primary-text-color); }
-      .marche { white-space: nowrap; }
+      .entete .marche { white-space: nowrap; }
       .indispo { color: var(--ti-rouge); }
       .bouton-plan { border: 0; background: transparent; cursor: pointer; font-size: 1em; padding: 0 2px; opacity: .7; }
       .bouton-plan.actif { opacity: 1; }

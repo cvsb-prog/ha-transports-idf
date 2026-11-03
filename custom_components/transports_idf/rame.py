@@ -180,9 +180,10 @@ class PositionRame:
             cible = numero(suivante.get("de_point"))
             choix = _prefere([l for l in lignes if l["type"] == "correspondance" and l["vers_id"] == cible])
             if choix:
-                return {**choix, "ligne_suivante": suivante.get("nom"), "mode_suivant": suivante.get("mode"),
-                        "suivante": {k: suivante.get(k) for k in ("nom", "mode", "couleur", "couleur_texte", "ligne_id")}}
-            return None
+                return {**choix, "ligne_suivante": suivante.get("nom"), "mode_suivant": suivante.get("mode")}
+            if not marche:
+                return None
+            # Pas de correspondance interne (changement de station à pied) : on sort, au plus près de la suite.
         # Sortie : la plus proche de la fin du trajet à pied, sinon celle qui donne sur sa première rue.
         sorties = [{**l, **{k: v for k, v in (self.acces.index.get(l["vers_id"]) or {}).items() if v is not None}} for l in lignes if l["type"] == "sortie"]
         if not sorties:

@@ -3,6 +3,14 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.7.0] - 2026-11-04
+
+### Modifié
+
+- Itinéraires proposés sans intitulé.
+- Rame dessinée sans fond.
+- Pictogramme « temps réel » sur les passages.
+
 ## [0.6.0] - 2026-11-03
 
 ### Ajouté
