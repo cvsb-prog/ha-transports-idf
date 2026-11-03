@@ -5,7 +5,7 @@
  * à l'intérieur, propositions et alertes sont repliées ; les gares se replient d'un clic.
  * Passages : vert = atteignable (départ ≥ marche + marge), orange = en se pressant, gris = trop tard.
  */
-const VERSION = "0.5.1";
+const VERSION = "0.6.0";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },
@@ -351,11 +351,11 @@ class TransportsIdfCard extends HTMLElement {
   }
 
   // ---- Briques visuelles ---------------------------------------------------
-  _pli(cle, defaut, tete, corps, classe = "") {
+  _pli(cle, defaut, tete, corps, classe = "", extra = "") {
     const ouvert = this._ouvert(cle, defaut);
     return `<div class="pli ${classe}${ouvert ? " ouvert" : ""}">
       <div class="pli-tete" data-bascule="${echapper(cle)}" data-defaut="${defaut ? 1 : 0}" role="button" tabindex="0" aria-expanded="${ouvert}">
-        <span class="chevron">${ouvert ? "▾" : "▸"}</span>${tete}</div>
+        <span class="chevron">${ouvert ? "▾" : "▸"}</span>${tete}</div>${extra}
       ${ouvert ? `<div class="pli-corps">${corps}</div>` : ""}</div>`;
   }
 
@@ -367,16 +367,17 @@ class TransportsIdfCard extends HTMLElement {
     const g = glyphe ? `<span class="glyphe g-${norm(groupe)}">${{ "Métro": "M", RER: "RER", Train: "TRAIN", Tram: "TRAM", Bus: "BUS" }[groupe] || ""}</span>` : "";
     const niveau = alerte && alerte !== "normal" ? alerte : null;
     const pastille = niveau ? `<span class="pastille ${niveau}" title="${LIBELLE_NIVEAU[niveau]}">${PASTILLE[niveau]}</span>` : "";
-    const attrs = cliquable ? ` data-ligne-info="${echapper(l.id)}" role="button" tabindex="0"` : "";
+    const ident = l.id ?? l.ligne_id;
+    const attrs = cliquable ? ` data-ligne-info="${echapper(ident)}" role="button" tabindex="0" title="Voir l'info trafic"` : "";
     const long = String(code).length > 2 ? " long" : "";
-    return `${g}<span class="logo f-${norm(groupe)}${long}${niveau ? ` a-${niveau}` : ""}${cliquable && this._ligneInfo === l.id ? " choisi" : ""}" style="--c:${echapper(fond)};--t:${echapper(texte)}"${attrs}>${echapper(code)}${pastille}</span>`;
+    return `${g}<span class="logo f-${norm(groupe)}${long}${niveau ? ` a-${niveau}` : ""}${cliquable && this._ligneInfo === ident ? " choisi" : ""}" style="--c:${echapper(fond)};--t:${echapper(texte)}"${attrs}>${echapper(code)}${pastille}</span>`;
   }
 
   _chaine(etapes, compacte = false) {
     // Version compacte (résumé d'un trajet replié) : seule la marche du début est gardée.
     return (etapes || [])
       .filter((e, n) => e.type === "transport" || (e.duree && (!compacte || n === 0)))
-      .map((e) => (e.type === "marche" ? `<span class="pied">🚶<sub>${echapper(e.duree)}</sub></span>` : this._logo(e, { glyphe: true, alerte: e.alerte })))
+      .map((e) => (e.type === "marche" ? `<span class="pied">🚶<sub>${echapper(e.duree)}</sub></span>` : this._logo(e, { glyphe: true, alerte: e.alerte, cliquable: !!(e.alerte && e.alerte !== "normal") })))
       .join(`<span class="sep">›</span>`);
   }
 
@@ -387,10 +388,30 @@ class TransportsIdfCard extends HTMLElement {
   }
 
   _resumeIt(it, intitule = "") {
-    const alerte = it.alerte && it.alerte !== "normal" ? `<span class="etiquette ${it.alerte}">${LIBELLE_NIVEAU[it.alerte]}</span>` : "";
     return `${intitule ? `<span class="intitule">${intitule}</span>` : ""}<span class="duree">${this._duree(it)}</span>
       <span class="horaires">${echapper(it.depart_h || "")}${it.arrivee_h ? ` – ${echapper(it.arrivee_h)}` : ""}</span>
-      <span class="chaine">${this._chaine(it.etapes)}</span>${alerte}`;
+      <span class="chaine">${this._chaine(it.etapes)}</span>`;
+  }
+
+  // Messages trafic d'une ligne (info trafic, sinon perturbations des trajets).
+  _messagesLigne(id) {
+    const info = this._etats("info_trafic")[0]?.attributes.lignes?.find((l) => l.id === id);
+    if (info?.perturbations?.length) return info.perturbations;
+    const vus = new Set();
+    return this._etats("trajet").flatMap((t) => t.attributes.perturbations || [])
+      .filter((p) => (p.lignes || []).includes(id) && !vus.has(p.id) && vus.add(p.id));
+  }
+
+  // Bloc affiché sous un résumé ou une étape quand on a cliqué sur le logo d'une de ses lignes.
+  _messageSi(etapes) {
+    const id = this._ligneInfo;
+    const e = id && (etapes || []).find((x) => x.type === "transport" && x.ligne_id === id && x.alerte && x.alerte !== "normal");
+    if (!e) return "";
+    const ps = this._messagesLigne(id);
+    const corps = ps.length
+      ? ps.map((p) => `<div class="msg-titre">${echapper(p.titre)}</div><div class="message">${echapper(p.message && p.message !== p.titre ? p.message : "")}</div>`).join("")
+      : `<div class="message">${LIBELLE_NIVEAU[e.alerte]}</div>`;
+    return `<div class="msg-ligne ${e.alerte}">${corps}</div>`;
   }
 
   _etapes(it) {
@@ -399,28 +420,29 @@ class TransportsIdfCard extends HTMLElement {
     return `<ol class="etapes">${etapes
       .map((e) => {
         if (e.type === "marche") return `<li class="marche"><span class="h"></span><span>🚶 ${echapper(e.duree)} min${e.vers ? ` jusqu'à ${echapper(e.vers)}` : ""}</span></li>`;
-        const suivants = e.suivants?.length ? `<span class="suivants" title="Si tu le rates">puis +${e.suivants.join(", +")} min</span>` : "";
-        const alerte = e.alerte && e.alerte !== "normal" ? `<span class="etiquette ${e.alerte}">${LIBELLE_NIVEAU[e.alerte]}</span>` : "";
-        return `<li><span class="h">${echapper(e.depart || "")}</span>${this._logo(e, { glyphe: false, alerte: e.alerte })}
+        const suivants = e.suivants?.length ? `<span class="suivants" title="Départs suivants si tu le rates">+${e.suivants.join(", +")} min</span>` : "";
+        const train = [e.voie ? `voie <b>${echapper(e.voie)}</b>` : "", e.mission ? `<b class="mission">${echapper(e.mission)}</b>` : ""].filter(Boolean).join(" · ");
+        return `<li><span class="h">${echapper(e.depart || "")}${suivants}</span>${this._logo(e, { alerte: e.alerte, cliquable: !!(e.alerte && e.alerte !== "normal") })}
           <span class="trajet-ligne"><span>${echapper(e.de)} → ${echapper(e.vers)}</span>
           <span class="sous">${e.direction ? `dir. ${echapper(e.direction)} · ` : ""}arr. ${echapper(e.arrivee || "?")}</span>
-          <span class="sous">${suivants}${alerte}</span>${this._rame(e.rame)}</span></li>`;
+          ${train ? `<span class="sous train">${train}</span>` : ""}${this._rame(e.rame)}${this._messageSi([e])}</span></li>`;
       })
       .join("")}</ol>`;
   }
 
   _rame(r) {
     if (!r?.voitures) return "";
-    // Rame dessinée dans le sens de la marche (l'avant à droite), voiture conseillée en couleur.
-    const voitures = Array.from({ length: r.voitures }, (_, i) => r.voitures - i)
-      .map((v) => `<span class="voiture${v === r.voiture ? " ici" : ""}"></span>`).join("");
-    const ou = { avant: "à l'avant", milieu: "au milieu", arriere: "à l'arrière" }[r.zone] || "";
-    const vers = r.type === "sortie"
-      ? `<span class="sortie">${r.numero ? `<b class="num-sortie">${echapper(r.numero)}</b>` : ""}sortie ${echapper(r.nom || r.vers)}</span>`
-      : `correspondance ${echapper([r.mode_suivant, r.ligne_suivante].filter(Boolean).join(" "))}`;
-    const equipement = r.equipement ? ` · ${echapper(r.equipement.toLowerCase())}` : "";
-    return `<span class="rame-ligne"><span class="rame" title="Sens de la marche →">${voitures}<span class="nez">▸</span></span>
-      <span>Monte ${ou} (voiture ${r.voiture}/${r.voitures}) → ${vers}${equipement}</span></span>`;
+    // Rame vue de côté, dans le sens de la marche : l'arrière à gauche, la cabine de tête à droite.
+    const voitures = Array.from({ length: r.voitures }, (_, i) => i + 1)
+      .reverse()
+      .map((v) => `<span class="voiture${v === r.voiture ? " ici" : ""}${v === r.voitures ? " queue" : ""}${v === 1 ? " tete" : ""}"><span class="vitre"></span></span>`)
+      .join("");
+    const suite = r.type === "sortie"
+      ? `<span class="panneau"><span class="panneau-num">${echapper(r.numero || "?")}</span>${echapper(r.nom || r.vers)}</span>`
+      : `<span class="vers-corresp">↳ ${r.suivante ? this._logo(r.suivante, { glyphe: true }) : echapper([r.mode_suivant, r.ligne_suivante].filter(Boolean).join(" "))}</span>`;
+    const equipement = r.equipement ? `<span class="sous">${echapper(r.equipement.toLowerCase())}</span>` : "";
+    const ou = { avant: "l'avant", milieu: "le milieu", arriere: "l'arrière" }[r.zone] || "";
+    return `<span class="rame-ligne"><span class="rame" title="Monter vers ${ou} du train (voiture ${r.voiture} sur ${r.voitures}) ; sens de la marche vers la droite">${voitures}</span>${suite}${equipement}</span>`;
   }
 
   // ---- Sections ------------------------------------------------------------
@@ -435,7 +457,7 @@ class TransportsIdfCard extends HTMLElement {
     else if (r.erreur) resultats = `<div class="erreur">${echapper(r.erreur)}</div>`;
     else if (r.resultats) {
       resultats = r.resultats.length
-        ? r.resultats.map((it, n) => this._pli(`rech|${n}`, false, this._resumeIt(it), this._etapes(it), "proposition")).join("")
+        ? r.resultats.map((it, n) => this._pli(`rech|${n}`, false, this._resumeIt(it), this._etapes(it), "proposition", this._ouvert(`rech|${n}`, false) ? "" : this._messageSi(it.etapes))).join("")
         : `<div class="sous">Aucun itinéraire trouvé.</div>`;
     }
     return { suggDest: sugg("dest", r.lieux), suggDepuis: sugg("depuis", r.lieuxDepuis), resultats };
@@ -474,7 +496,8 @@ class TransportsIdfCard extends HTMLElement {
       const sig = `${it.depart}|${it.resume}`;
       if (vus.has(sig)) return;
       vus.add(sig);
-      corps.push(this._pli(`${id}|${cle}`, false, this._resumeIt(it, intitule), this._etapes(it), classe));
+      const cleP = `${id}|${cle}`;
+      corps.push(this._pli(cleP, false, this._resumeIt(it, intitule), this._etapes(it), classe, this._ouvert(cleP, false) ? "" : this._messageSi(it.etapes)));
     };
     if (maintenant) {
       (maintenant.itineraires || []).forEach((it, n) => prop(it, `m${n}`, n === 0 ? "Maintenant" : "Ou", "proposition maintenant"));
@@ -487,7 +510,7 @@ class TransportsIdfCard extends HTMLElement {
       if (a.rechange?.etapes?.length) prop(a.rechange, "rechange", "Rechange");
       for (const [n, it] of (a.alternatives || []).entries()) {
         const g = it.gain;
-        const libelle = g == null ? "Autre" : arrivee ? (g >= 0 ? `Part ${g} min plus tard` : `Part ${-g} min plus tôt`) : g >= 0 ? `${g} min plus rapide` : `${-g} min plus long`;
+        const libelle = g == null || g === 0 ? "Autre" : arrivee ? (g >= 0 ? `Part ${g} min plus tard` : `Part ${-g} min plus tôt`) : g >= 0 ? `${g} min plus rapide` : `${-g} min plus long`;
         prop(it, `alt${n}`, libelle, `proposition${it.plus_rapide ? " mieux" : ""}`);
       }
     }
@@ -498,7 +521,7 @@ class TransportsIdfCard extends HTMLElement {
         `<div class="message">${echapper(p.message || p.titre)}${fin}</div>`, "alerte"));
     }
     if (!enVeille && s.state !== "on" && !maintenant) corps.push(`<div class="sous">Propositions en direct pendant la veille (à partir de ${heureCourte(a.depart_habituel)} moins ${a.avance} min), ou avec « Partir maintenant ».</div>`);
-    return this._pli(`${id}|trajet`, enVeille, tete, corps.join(""), `trajet ${classe}`);
+    return this._pli(`${id}|trajet`, enVeille, tete, corps.join(""), `trajet ${classe}`, ouvert ? "" : this._messageSi(etapes));
   }
 
   _htmlInfoTrafic() {
@@ -819,19 +842,33 @@ class TransportsIdfCard extends HTMLElement {
       .alerte-titre { flex: 1; min-width: 0; }
       .message { font-size: .9em; white-space: pre-line; overflow-wrap: anywhere; }
       .etapes { list-style: none; margin: 4px 0 2px; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: .9em; }
-      .etapes li { display: grid; grid-template-columns: 3.6em auto 1fr; align-items: start; gap: 8px; }
-      .etapes li.marche { grid-template-columns: 3.6em 1fr; color: var(--secondary-text-color); }
-      .etapes .h { font-weight: 600; font-variant-numeric: tabular-nums; }
+      .etapes li { display: grid; grid-template-columns: 4.2em auto 1fr; align-items: start; gap: 8px; }
+      .etapes li.marche { grid-template-columns: 4.2em 1fr; color: var(--secondary-text-color); }
+      .etapes .h { font-weight: 600; font-variant-numeric: tabular-nums; display: flex; flex-direction: column; line-height: 1.25; }
+      .etapes .h .suivants { font-weight: 400; font-size: .78em; color: var(--secondary-text-color); white-space: nowrap; margin: 0; }
       .trajet-ligne { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
       .suivants { margin-right: 6px; }
-      .rame-ligne { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: .85em; margin-top: 2px; }
-      .rame { display: inline-flex; align-items: center; gap: 2px; }
-      .voiture { width: 11px; height: 7px; border-radius: 2px; border: 1px solid var(--secondary-text-color); opacity: .55; }
-      .voiture.ici { background: var(--primary-color); border-color: var(--primary-color); opacity: 1; }
-      .num-sortie {
-        display: inline-flex; align-items: center; justify-content: center; min-width: 1.4em; height: 1.4em; margin-right: 4px;
-        border-radius: 3px; background: #ffd400; color: #000; font-size: .9em;
+      .rame-ligne { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: .85em; margin-top: 4px; }
+      .rame { display: inline-flex; align-items: center; gap: 2px; padding: 3px 4px; border-radius: 4px; background: #1d2654; }
+      .voiture { position: relative; width: 16px; height: 11px; background: #5b6a8f; border-radius: 2px; }
+      .voiture.ici { background: #4caf50; }
+      .voiture.queue { border-radius: 6px 2px 2px 6px; }
+      .voiture.tete { border-radius: 2px 2px 2px 2px; clip-path: polygon(0 0, 62% 0, 100% 55%, 100% 100%, 0 100%); width: 18px; }
+      .voiture .vitre { position: absolute; left: 6px; top: 2px; width: 3px; height: 4px; border-radius: 1px; background: rgba(255,255,255,.85); }
+      .voiture.tete .vitre { left: 5px; }
+      .panneau {
+        display: inline-flex; align-items: center; gap: 6px; background: #1d2654; color: #fff; font-weight: 700;
+        border-radius: 3px; padding: 2px 8px 2px 4px; font-size: .95em; letter-spacing: .01em;
       }
+      .panneau-num { display: inline-flex; align-items: center; justify-content: center; min-width: 1.15em; height: 1.15em; border: 1.5px solid #fff; border-radius: 2px; font-size: .9em; padding: 0 1px; }
+      .vers-corresp { display: inline-flex; align-items: center; gap: 4px; color: var(--secondary-text-color); }
+      .train b { color: var(--primary-text-color); }
+      .mission { font-family: monospace; letter-spacing: .08em; }
+      .msg-ligne { margin: 2px 0 4px 1.2em; padding: 6px 8px; border-radius: 6px; font-size: .88em; border-left: 3px solid var(--ti-orange); background: color-mix(in srgb, var(--ti-orange) 8%, transparent); }
+      .msg-ligne.interrompu { border-left-color: var(--ti-rouge); background: color-mix(in srgb, var(--ti-rouge) 8%, transparent); }
+      .msg-ligne.travaux { border-left-color: #757575; background: var(--ti-fond); }
+      .etapes .msg-ligne { margin-left: 0; }
+      .msg-titre { font-weight: 600; }
       .nez { font-size: .8em; color: var(--secondary-text-color); margin-left: 1px; }
 
       /* Info trafic */

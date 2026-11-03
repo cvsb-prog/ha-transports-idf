@@ -105,6 +105,14 @@ def distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return math.hypot(dx, dy)
 
 
+ORDRE_EQUIPEMENT = {"Escalator": 0, None: 1, "Escalier": 2, "Ascenseur": 3}
+
+
+def _prefere(choix: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Plusieurs positions pour la même destination (escalator, escalier, ascenseur…) : on garde la plus pratique."""
+    return min(choix, key=lambda l: ORDRE_EQUIPEMENT.get(l.get("equipement"), 1), default=None)
+
+
 class Jeu:
     """Un fichier de données : copie livrée, cache local, mise à jour mensuelle."""
 
@@ -170,9 +178,10 @@ class PositionRame:
             return None
         if suivante and suivante.get("type") == "transport":
             cible = numero(suivante.get("de_point"))
-            choix = next((l for l in lignes if l["type"] == "correspondance" and l["vers_id"] == cible), None)
+            choix = _prefere([l for l in lignes if l["type"] == "correspondance" and l["vers_id"] == cible])
             if choix:
-                return {**choix, "ligne_suivante": suivante.get("nom"), "mode_suivant": suivante.get("mode")}
+                return {**choix, "ligne_suivante": suivante.get("nom"), "mode_suivant": suivante.get("mode"),
+                        "suivante": {k: suivante.get(k) for k in ("nom", "mode", "couleur", "couleur_texte", "ligne_id")}}
             return None
         # Sortie : la plus proche de la fin du trajet à pied, sinon celle qui donne sur sa première rue.
         sorties = [{**l, **{k: v for k, v in (self.acces.index.get(l["vers_id"]) or {}).items() if v is not None}} for l in lignes if l["type"] == "sortie"]
@@ -181,7 +190,8 @@ class PositionRame:
         fin = (marche or {}).get("vers_coord")
         avec_gps = [l for l in sorties if l.get("lat") is not None]
         if fin and avec_gps:
-            choix = min(avec_gps, key=lambda l: distance(fin[0], fin[1], l["lat"], l["lon"]))
+            proche = min(avec_gps, key=lambda l: distance(fin[0], fin[1], l["lat"], l["lon"]))
+            choix = _prefere([l for l in avec_gps if l["vers_id"] == proche["vers_id"]])
             return {k: v for k, v in choix.items() if k not in ("lat", "lon")}
         rues = [_norm(r) for r in (marche or {}).get("rues", []) if r]
         for rue in rues:

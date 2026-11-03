@@ -3,6 +3,14 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.6.0] - 2026-11-03
+
+### Ajouté
+
+- Prochains départs d'un trajet.
+- Panneau de sortie à l'arrivée.
+- Voie et mission des RER.
+
 ## [0.5.1] - 2026-11-03
 
 ### Ajouté
