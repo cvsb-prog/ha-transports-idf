@@ -245,6 +245,7 @@ class Itineraires:
         self.client = client
         self._cache: dict[tuple, tuple[datetime, list[datetime]]] = {}
         self.niveau_ligne = lambda ligne_id: None  # remplacé par l'info trafic
+        self.rame = None  # PositionRame, branchée au démarrage
 
     async def suivants(self, its: list[dict[str, Any]]) -> None:
         """Ajoute à chaque étape en transport les départs suivants (minutes après le départ visé)."""
@@ -276,10 +277,18 @@ class Itineraires:
             self._cache.clear()
 
     def alertes(self, its: list[dict[str, Any]], niveaux: dict[str, str]) -> None:
+        """État des lignes de chaque étape, et où monter dans la rame quand on le sait."""
         for it in its:
-            for e in it.get("etapes") or []:
-                if e.get("type") == "transport":
-                    e["alerte"] = niveaux.get(e.get("ligne_id")) or self.niveau_ligne(e.get("ligne_id"))
+            etapes = it.get("etapes") or []
+            for n, e in enumerate(etapes):
+                if e.get("type") != "transport":
+                    continue
+                e["alerte"] = niveaux.get(e.get("ligne_id")) or self.niveau_ligne(e.get("ligne_id"))
+                if self.rame is not None:
+                    suite = etapes[n + 1 :]
+                    suivante = next((x for x in suite if x.get("type") == "transport"), None)
+                    marche = suite[0] if suite and suite[0].get("type") == "marche" else None
+                    e["rame"] = self.rame.conseil(e, suivante, None if suivante else marche)
             it["alerte"] = pire_niveau(e.get("alerte") for e in it.get("etapes") or [])
 
 

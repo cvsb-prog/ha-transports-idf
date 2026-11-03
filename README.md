@@ -3,7 +3,7 @@
 Intégration Home Assistant pour les transports en commun d'Île-de-France, à partir des API
 [PRIM](https://prim.iledefrance-mobilites.fr/) d'Île-de-France Mobilités, avec sa carte de tableau de bord.
 
-Version actuelle : **0.4.0** (voir le [CHANGELOG](CHANGELOG.md)).
+Version actuelle : **0.5.0** (voir le [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctionnalités
 
@@ -12,6 +12,7 @@ Version actuelle : **0.4.0** (voir le [CHANGELOG](CHANGELOG.md)).
 - Événement `transports_idf_alerte` pour bâtir ses propres alertes de trajet.
 - Service **Partir maintenant** : itinéraires d'un trajet au départ de maintenant, marche comprise.
 - **Réglages** : zone de départ, marge « en se pressant », rafraîchissement jour / nuit. Lignes d'intérêt pour l'info trafic.
+- **Position dans la rame** (jeu de données RATP livré).
 
 ## Carte de tableau de bord
 
@@ -35,6 +36,7 @@ Mise à jour : remplacer le dossier, redémarrer, actualiser le navigateur. Rég
 
 ## Données et licences tierces
 
+- RATP « Positionnement dans la rame » : jeux de données ouverts, copie livrée dans `donnees/`.
 - Données temps réel et calcul d'itinéraire : PRIM, Île-de-France Mobilités.
 
 ## Licence
