@@ -140,20 +140,30 @@
       "step": {
         "user": {
           "title": "Ajouter un trajet",
-          "description": "Un trajet habituel d'une personne. Pendant la veille, toutes les lignes de l'itinéraire choisi (correspondances comprises) sont surveillées et l'itinéraire est recalculé en direct.",
+          "description": "Un trajet habituel d'une personne. Les itinéraires proposés sont toujours calculés au départ de maintenant ; l'heure sert au rappel « pars à … » et au trajet nominal. Toutes les lignes de l'itinéraire préféré (correspondances comprises) sont surveillées.",
           "data": {
             "nom": "Nom du trajet",
             "personne": "Personne",
             "origine": "Départ (zone)",
             "recherche": "Destination (arrêt, adresse, lieu)",
             "heure_depart": "Heure",
-            "avance": "Veille avant le départ habituel",
+            "avance": "Veille avant le départ de la maison",
             "type_heure": "Cette heure est…",
-            "recherche_depart": "Départ précis (adresse, arrêt) — facultatif"
+            "recherche_depart": "Départ précis (adresse, arrêt) — facultatif",
+            "jours": "Jours du trajet",
+            "detour_mode": "Détour : comment tu y vas",
+            "detour_duree": "Détour : temps pour y aller",
+            "detour_pause": "Détour : temps sur place",
+            "detour_heure": "Détour : heure d'arrivée imposée",
+            "detour_jours": "Détour : jours concernés",
+            "supprimer_detour": "Supprimer le détour",
+            "recherche_detour": "Détour avant les transports (adresse, lieu) — facultatif"
           },
           "data_description": {
             "type_heure": "Heure d'arrivée cible : la veille commence avant le départ habituel ; si une perturbation ou un retard oblige à partir plus tôt pour arriver à l'heure, une alerte le dit. Heure de départ : on compare l'arrivée des itinéraires partant à cette heure.",
-            "recherche_depart": "Laisse vide pour partir de la zone choisie au-dessus."
+            "recherche_depart": "Laisse vide pour partir de la zone choisie au-dessus.",
+            "jours": "La veille, les alertes et le trajet nominal ne concernent que ces jours.",
+            "recherche_detour": "Ex. une école : tu y passes avant de prendre les transports, certains jours."
           }
         },
         "destination": {
@@ -177,18 +187,48 @@
             "personne": "Personne",
             "origine": "Départ (zone)",
             "heure_depart": "Heure",
-            "avance": "Veille avant le départ habituel",
+            "avance": "Veille avant le départ de la maison",
             "recalculer": "Choisir un autre itinéraire",
-            "type_heure": "Cette heure est…"
+            "type_heure": "Cette heure est…",
+            "jours": "Jours du trajet",
+            "detour_mode": "Détour : comment tu y vas",
+            "detour_duree": "Détour : temps pour y aller",
+            "detour_pause": "Détour : temps sur place",
+            "detour_heure": "Détour : heure d'arrivée imposée",
+            "detour_jours": "Détour : jours concernés",
+            "supprimer_detour": "Supprimer le détour",
+            "recherche_detour": "Détour avant les transports (adresse, lieu) — facultatif"
           },
           "data_description": {
-            "type_heure": "Heure d'arrivée cible : la veille commence avant le départ habituel ; si une perturbation ou un retard oblige à partir plus tôt pour arriver à l'heure, une alerte le dit. Heure de départ : on compare l'arrivée des itinéraires partant à cette heure."
+            "type_heure": "Heure d'arrivée cible : la veille commence avant le départ habituel ; si une perturbation ou un retard oblige à partir plus tôt pour arriver à l'heure, une alerte le dit. Heure de départ : on compare l'arrivée des itinéraires partant à cette heure.",
+            "jours": "La veille, les alertes et le trajet nominal ne concernent que ces jours.",
+            "recherche_detour": "Ex. une école : tu y passes avant de prendre les transports, certains jours."
           }
         },
         "depart": {
           "title": "Choisir le départ",
           "data": {
             "depart": "Départ"
+          }
+        },
+        "detour": {
+          "title": "Détour",
+          "data": {
+            "lieu": "Lieu du détour",
+            "detour_mode": "Comment tu y vas"
+          }
+        },
+        "detour_reglages": {
+          "title": "Détour : {lieu}",
+          "description": "Temps pour y aller depuis le départ : {calcul}.",
+          "data": {
+            "detour_duree": "Temps pour y aller",
+            "detour_pause": "Temps sur place",
+            "detour_heure": "Heure d'arrivée imposée (facultatif)",
+            "detour_jours": "Jours du détour"
+          },
+          "data_description": {
+            "detour_heure": "Ex. ouverture de l'école : tu y arrives à cette heure, puis tu repars après le temps sur place."
           }
         }
       },

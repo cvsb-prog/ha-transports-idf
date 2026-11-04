@@ -30,10 +30,10 @@ from .coordinator import (
     InfoTraficCoordinator,
     Itineraires,
     PassagesCoordinator,
-    TraficCoordinator,
     coordonnees_zone,
 )
 from .rame import PositionRame
+from .trajets import TraficCoordinator
 
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -64,7 +64,7 @@ async def _partir_maintenant(appel: ServiceCall) -> ServiceResponse:
         raise ServiceValidationError(f"{appel.data['trajet']} n'est pas un trajet Transports IDF")
     if entree.state is not ConfigEntryState.LOADED:
         raise ServiceValidationError("L'intégration Transports IDF n'est pas chargée")
-    resultat = await entree.runtime_data.trafic.partir_maintenant(entite.config_subentry_id)
+    resultat = await entree.runtime_data.trafic.calculer_maintenant(entite.config_subentry_id)
     return resultat if appel.return_response else None
 
 

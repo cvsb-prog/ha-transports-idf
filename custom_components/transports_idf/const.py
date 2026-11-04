@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "transports_idf"
 NOM = "Transports IDF"
-VERSION = "0.7.1"
+VERSION = "0.8.0"
 
 BASE_URL = "https://prim.iledefrance-mobilites.fr/marketplace"
 NAVITIA = f"{BASE_URL}/v2/navitia"
@@ -67,6 +67,18 @@ T_RESUME = "resume"
 T_ETAPES = "etapes"  # étapes de l'itinéraire choisi (résumé replié de la carte)
 T_ORIGINE_ID = "origine_id"  # lieu Navitia (adresse, arrêt…) si le départ n'est pas une zone
 T_ORIGINE_NOM = "origine_nom"
+T_JOURS = "jours"  # jours du trajet ("0" = lundi … "6" = dimanche) ; défaut : lundi–vendredi
+
+# Détour avant les transports (facultatif)
+T_DET_ID = "detour_id"
+T_DET_NOM = "detour_nom"
+T_DET_MODE = "detour_mode"  # marche, velo, voiture, transports
+T_DET_DUREE = "detour_duree"  # minutes pour y aller (sauf en transports : calculé en direct)
+T_DET_PAUSE = "detour_pause"  # minutes sur place
+T_DET_HEURE = "detour_heure"  # « HH:MM:SS » : heure d'arrivée imposée au détour (facultatif)
+T_DET_JOURS = "detour_jours"
+JOURS_DEFAUT = ["0", "1", "2", "3", "4"]
+MODES_DETOUR = {"marche": "walking", "velo": "bike", "voiture": "car"}
 
 # Écart à partir duquel on conseille de partir plus tôt / un autre itinéraire
 ECART_MINUTES = 3
