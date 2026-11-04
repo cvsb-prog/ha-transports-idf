@@ -88,13 +88,17 @@ class ClientPrim:
 
     async def temps_marche(self, lat: float, lon: float, zone_id: str) -> int | None:
         """Durée à pied (secondes) calculée par le calculateur, None si pas de solution."""
+        return await self.temps_direct(f"{lon};{lat}", zone_id, "walking")
+
+    async def temps_direct(self, depart: str, arrivee: str, mode: str) -> int | None:
+        """Durée (secondes) d'un trajet direct à pied (walking), à vélo (bike) ou en voiture (car)."""
         params = [
-            ("from", f"{lon};{lat}"),
-            ("to", zone_id),
+            ("from", depart),
+            ("to", arrivee),
             ("direct_path", "only"),
-            ("direct_path_mode[]", "walking"),
-            ("first_section_mode[]", "walking"),
-            ("last_section_mode[]", "walking"),
+            ("direct_path_mode[]", mode),
+            ("first_section_mode[]", mode),
+            ("last_section_mode[]", mode),
         ]
         donnees = await self._get(f"{NAVITIA}/journeys", params)
         durees = [j.get("duration") for j in donnees.get("journeys", []) if isinstance(j.get("duration"), int)]
@@ -490,13 +494,20 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
     return sortie
 
 
+ICONES_MODE = {"marche": "🚶", "velo": "🚲", "voiture": "🚗", "transports": "🚌"}
+
+
 def texte_itineraire(etapes: list[dict[str, Any]], depart: Any = None, arrivee: Any = None) -> str:
     """Version texte des étapes, pour les notifications (une étape par ligne)."""
     lignes = []
     if heure_navitia(depart):
         lignes.append(f"Départ {heure_navitia(depart)}")
     for e in etapes:
-        if e["type"] == "marche":
+        if e["type"] == "detour":
+            lignes.append(f"{ICONES_MODE.get(e.get('mode'), '🚶')} {e['duree']} min jusqu'à {e.get('vers')}")
+        elif e["type"] == "pause":
+            lignes.append(f"⏸ {e['duree']} min à {e.get('lieu')}" + (f", reprise {e['reprise']}" if e.get("reprise") else ""))
+        elif e["type"] == "marche":
             lignes.append(f"🚶 {e['duree']} min" + (f" jusqu'à {e['vers']}" if e.get("vers") else ""))
         else:
             ligne = f"{e.get('mode') or ''} {e.get('nom') or ''}".strip()

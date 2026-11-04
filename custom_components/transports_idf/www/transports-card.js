@@ -5,7 +5,7 @@
  * à l'intérieur, propositions et alertes sont repliées ; les gares se replient d'un clic.
  * Passages : vert = atteignable (départ ≥ marche + marge), orange = en se pressant, gris = trop tard.
  */
-const VERSION = "0.7.1";
+const VERSION = "0.8.0";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },
@@ -31,6 +31,7 @@ const DEFAUTS = {
 };
 
 const GROUPES = ["RER", "Train", "Métro", "Tram"];
+const ICONES = { marche: "🚶", velo: "🚲", voiture: "🚗", transports: "🚌" };
 const NIVEAUX = { interrompu: 3, perturbe: 2, travaux: 1 };
 const PASTILLE = { interrompu: "✕", perturbe: "!", travaux: "⚒" };
 const LIBELLE_NIVEAU = { interrompu: "trafic interrompu", perturbe: "trafic perturbé", travaux: "travaux" };
@@ -65,7 +66,8 @@ class TransportsIdfCard extends HTMLElement {
     this._ouverts = new Map(); // clé de pli → ouvert (choix de l'utilisateur)
     this._plans = new Set();
     this._blocs = new Map();
-    this._enCours = new Set();
+    this._enCours = new Set(); // trajets dont le calcul au départ de maintenant est en cours
+    this._demandes = new Map(); // trajet → dernière demande de calcul (ms)
     this._erreurs = new Map();
     this._ligneInfo = null; // ligne dont on lit le détail dans l'info trafic
     this._rech = { texte: "", lieux: [], dest: null, depuis: null, depuisTexte: "", lieuxDepuis: [], mode: "maintenant", heure: "", resultats: null, erreur: "", calcul: false };
@@ -269,7 +271,6 @@ class TransportsIdfCard extends HTMLElement {
     if (this._enCours.has(id)) return;
     this._enCours.add(id);
     this._erreurs.delete(id);
-    this._ouverts.set(`${id}|trajet`, true);
     this._rendu();
     try {
       await this._hass.callService("transports_idf", "partir_maintenant", { trajet: id });
@@ -383,8 +384,10 @@ class TransportsIdfCard extends HTMLElement {
   _chaine(etapes, compacte = false) {
     // Version compacte (résumé d'un trajet replié) : seule la marche du début est gardée.
     return (etapes || [])
-      .filter((e, n) => e.type === "transport" || (e.duree && (!compacte || n === 0)))
-      .map((e) => (e.type === "marche" ? `<span class="pied">🚶<sub>${echapper(e.duree)}</sub></span>` : this._logo(e, { glyphe: true, alerte: e.alerte, cliquable: !!(e.alerte && e.alerte !== "normal") })))
+      .filter((e, n) => e.type === "transport" || e.type === "detour" || e.type === "pause" || (e.duree && (!compacte || n === 0)))
+      .map((e) => (e.type === "detour" ? `<span class="pied">${ICONES[e.mode] || "🚶"}<sub>${echapper(e.duree)}</sub></span>`
+        : e.type === "pause" ? `<span class="pied" title="${echapper(e.lieu || "")}">📍<sub>${echapper(e.duree)}</sub></span>`
+        : e.type === "marche" ? `<span class="pied">🚶<sub>${echapper(e.duree)}</sub></span>` : this._logo(e, { glyphe: true, alerte: e.alerte, cliquable: !!(e.alerte && e.alerte !== "normal") })))
       .join(`<span class="sep">›</span>`);
   }
 
@@ -426,6 +429,8 @@ class TransportsIdfCard extends HTMLElement {
     if (!etapes.length) return `<div class="sous">${echapper(it?.resume || "")}</div>`;
     return `<ol class="etapes">${etapes
       .map((e, n) => {
+        if (e.type === "detour") return `<li class="marche"><span class="h"></span><span>${ICONES[e.mode] || "🚶"} ${echapper(e.duree)} min jusqu'à <b>${echapper(e.vers)}</b></span></li>`;
+        if (e.type === "pause") return `<li class="pause"><span class="h">${echapper(e.reprise || "")}</span><span>📍 ${echapper(e.duree)} min à ${echapper(e.lieu)}</span></li>`;
         if (e.type === "marche") return this._marche(e, n === etapes.length - 1);
         const suivants = e.suivants?.length ? `<span class="suivants" title="Départs suivants si tu le rates">+${e.suivants.join(", +")} min</span>` : "";
         const train = [e.voie ? `voie <b>${echapper(e.voie)}</b>` : "", e.mission ? `<b class="mission">${echapper(e.mission)}</b>` : ""].filter(Boolean).join(" · ");
@@ -489,33 +494,55 @@ class TransportsIdfCard extends HTMLElement {
     return { suggDest: sugg("dest", r.lieux), suggDepuis: sugg("depuis", r.lieuxDepuis), resultats };
   }
 
+  _jour(iso) {
+    if (!iso) return "";
+    const j = new Date(`${iso}T12:00:00`);
+    const auj = new Date();
+    auj.setHours(12, 0, 0, 0);
+    const n = Math.round((j - auj) / 86400000);
+    return n === 0 ? "aujourd'hui" : n === 1 ? "demain" : j.toLocaleDateString("fr-FR", { weekday: "long" });
+  }
+
+  // Indicateur de rappel, recalculé à chaque rendu (toutes les 15 s).
+  _rappel(a) {
+    const r = a.rappel;
+    if (!a.en_veille || !r) return "";
+    if (r.impossible) return `<span class="statut mauvais">arrivée à ${echapper(r.heure_cible)} impossible</span>`;
+    if (r.retard) return `<span class="statut mauvais">arrivée ${echapper(r.arrivee_h)} (en retard)</span>`;
+    const minutes = Math.floor((new Date(r.depart_iso).getTime() - Date.now()) / 60000);
+    if (minutes >= 3) return `<span class="statut ok">pars dans ${minutes} min</span>`;
+    if (minutes >= 0) return `<span class="statut attention">pars maintenant</span>`;
+    const prochain = (a.direct || [])[0];
+    return `<span class="statut mauvais">en retard${prochain?.arrivee_h ? ` · arrivée ${echapper(prochain.arrivee_h)}` : ""}</span>`;
+  }
+
   _htmlTrajet(s) {
     const a = s.attributes;
     const id = s.entity_id;
     const arrivee = a.type_heure === "arrivee";
-    const c = a.conseil;
-    const ref = a.reference;
     const enVeille = !!a.en_veille;
-    const maintenant = this._maintenant(a);
+    const direct = a.direct || [];
+    const nominal = a.nominal;
     const ouvert = this._ouvert(`${id}|trajet`, enVeille);
+    // Déplier un trajet déclenche le calcul au départ de maintenant (au plus une fois par minute).
+    if (ouvert && !this._enCours.has(id) && (!a.direct_le || Date.now() - new Date(a.direct_le).getTime() > 60000) && !(this._demandes.get(id) > Date.now() - 60000)) {
+      this._demandes.set(id, Date.now());
+      setTimeout(() => this._partir(id), 0);
+    }
 
-    // Résumé replié : lignes (avec pastille si problème), départ, arrivée.
-    const etapes = (enVeille && ref?.etapes?.length ? ref.etapes : a.etapes_habituelles) || [];
-    const heureArr = arrivee ? heureCourte(a.heure) : enVeille && ref?.arrivee_h ? ref.arrivee_h : "";
-    let statut = "";
-    if (c?.impossible) statut = `<span class="statut mauvais">arrivée impossible</span>`;
-    else if (arrivee && enVeille && c?.depart_h) {
-      const tot = (c.avance || 0) >= 3;
-      statut = `<span class="statut ${tot ? "attention" : "ok"}">pars à ${echapper(c.depart_h)}${tot ? ` (−${c.avance} min)` : ""}</span>`;
-    } else if (!arrivee) statut = `<span class="statut neutre">départ ${heureCourte(a.heure)}</span>`;
-    const classe = s.state === "on" ? (a.alerte === "interrompu" ? "mauvais" : "attention") : (c?.avance || 0) >= 3 ? "attention" : "";
+    // Résumé replié : en veille, le meilleur départ maintenant ; sinon le nominal (prochaine occurrence).
+    const resume = enVeille && direct[0] ? direct[0] : nominal;
+    const etapes = resume?.etapes?.length ? resume.etapes : a.etapes_habituelles || [];
+    const horaires = resume?.depart_h
+      ? `<span class="horaires">${enVeille ? "" : `${this._jour(nominal?.jour)} `}${echapper(resume.depart_h)} – ${echapper(resume.arrivee_h || "")}</span>`
+      : `<span class="horaires">${arrivee ? "arrivée" : "départ"} ${heureCourte(a.heure)}</span>`;
+    const classe = s.state === "on" ? (a.alerte === "interrompu" ? "mauvais" : "attention") : (a.rappel?.avance || 0) >= 3 ? "attention" : "";
     const tete = `<span class="trajet-nom">${echapper(a.trajet)}</span><span class="chaine">${this._chaine(etapes, true)}</span>
-      <span class="trajet-fin">${statut}${heureArr ? `<span class="arrivee">→ ${echapper(heureArr)}</span>` : ""}</span>
-      <span class="trajet-depuis">depuis ${echapper(a.origine_nom || "la maison")}${a.destination ? ` · vers ${echapper(a.destination)}` : ""}</span>`;
+      <span class="trajet-fin">${this._rappel(a)}${horaires}</span>
+      <span class="trajet-depuis">depuis ${echapper(a.origine_nom || "la maison")}${a.detour?.nom ? ` · par ${echapper(a.detour.nom)}` : ""}${a.destination ? ` · vers ${echapper(a.destination)}` : ""} · ${arrivee ? "arrivée" : "départ"} ${heureCourte(a.heure)}</span>`;
 
     const corps = [];
-    const bouton = `<button class="partir" type="button" data-partir="${echapper(id)}"${this._enCours.has(id) ? " disabled" : ""}>${this._enCours.has(id) ? "Calcul…" : "🚶 Partir maintenant"}</button>`;
-    corps.push(`<div class="actions">${bouton}${this._erreurs.has(id) ? `<span class="erreur">${echapper(this._erreurs.get(id))}</span>` : ""}</div>`);
+    if (this._erreurs.has(id)) corps.push(`<div class="erreur">${echapper(this._erreurs.get(id))}</div>`);
     const vus = new Set();
     const prop = (it, cle, note = "", classe = "proposition") => {
       if (!it?.etapes?.length) return;
@@ -527,24 +554,21 @@ class TransportsIdfCard extends HTMLElement {
     };
     const ecartHtml = (g) => {
       if (g == null || g === 0) return "";
-      const t = arrivee ? (g > 0 ? `part ${g} min plus tard` : `part ${-g} min plus tôt`) : g > 0 ? `${g} min plus rapide` : `${-g} min plus long`;
-      return `<span class="ecart${g > 0 ? " mieux" : ""}">${t}</span>`;
+      return `<span class="ecart${g > 0 ? " mieux" : ""}">${g > 0 ? `${g} min plus rapide` : `${-g} min plus long`}</span>`;
     };
-    if (maintenant) {
-      (maintenant.itineraires || []).forEach((it, n) => prop(it, `m${n}`, n === 0 ? `<span class="ecart maintenant">maintenant</span>` : "", "proposition maintenant"));
-      if (!(maintenant.itineraires || []).length) corps.push(`<div class="sous">Aucun itinéraire au départ de maintenant.</div>`);
+    if (direct.length) {
+      direct.forEach((it, n) => {
+        if (n === 1 && direct[0].prefere) corps.push(`<div class="separation" aria-hidden="true"></div>`);
+        prop(it, `d${n}`, it.prefere ? "" : ecartHtml(it.gain), `proposition${it.prefere ? " prefere" : ""}`);
+      });
+    } else if (this._enCours.has(id)) corps.push(`<div class="sous">Calcul des départs…</div>`);
+    else corps.push(`<div class="sous">Aucun itinéraire au départ de maintenant.</div>`);
+    if (nominal?.etapes?.length) {
+      corps.push(`<div class="separation" aria-hidden="true"></div>`);
+      const cleN = `${id}|nominal`;
+      const note = `<span class="ecart">habituel · ${this._jour(nominal.jour)}</span>`;
+      corps.push(this._pli(cleN, false, this._resumeIt(nominal, note), this._etapes(nominal), "proposition nominal", this._ouvert(cleN, false) ? "" : this._messageSi(nominal.etapes)));
     }
-    if (enVeille || s.state === "on") {
-      if (ref) prop(ref, "ref", "", "proposition prefere");
-      else if (s.state === "on") corps.push(`<div class="sous">Itinéraire préféré indisponible pour l'instant.</div>`);
-      const avant = corps.length;
-      if (arrivee && c && !c.impossible && !c.habituel) prop(c, "conseil", `<span class="ecart mieux">à prendre</span>`);
-      if (a.rechange?.etapes?.length) prop(a.rechange, "rechange", `<span class="ecart">rechange</span>`);
-      for (const [n, it] of (a.alternatives || []).entries()) prop(it, `alt${n}`, ecartHtml(it.gain), `proposition${it.plus_rapide ? " mieux" : ""}`);
-      // Les autres itinéraires, un peu détachés du préféré.
-      if (corps.length > avant) corps.splice(avant, 0, `<div class="separation" aria-hidden="true"></div>`);
-    }
-    if (!enVeille && s.state !== "on" && !maintenant) corps.push(`<div class="sous">Propositions en direct pendant la veille (à partir de ${heureCourte(a.depart_habituel)} moins ${a.avance} min), ou avec « Partir maintenant ».</div>`);
     return this._pli(`${id}|trajet`, enVeille, tete, corps.join(""), `trajet ${classe}`, ouvert ? "" : this._messageSi(etapes));
   }
 
@@ -867,6 +891,8 @@ class TransportsIdfCard extends HTMLElement {
       .message { font-size: .9em; white-space: pre-line; overflow-wrap: anywhere; }
       .etapes { list-style: none; margin: 4px 0 2px; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: .9em; }
       .etapes li { display: grid; grid-template-columns: 4.2em auto minmax(0, 1fr); align-items: start; gap: 8px; }
+      .etapes li.pause { grid-template-columns: 4.2em minmax(0, 1fr); color: var(--secondary-text-color); }
+      .proposition.nominal { opacity: .75; }
       .etapes li.marche { grid-template-columns: 4.2em minmax(0, 1fr); color: var(--secondary-text-color); }
       .etapes .h { font-weight: 600; font-variant-numeric: tabular-nums; display: flex; flex-direction: column; line-height: 1.25; }
       .etapes .h .suivants { font-weight: 400; font-size: .78em; color: var(--secondary-text-color); white-space: nowrap; margin: 0; }
