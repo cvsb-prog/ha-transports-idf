@@ -5,7 +5,7 @@
  * à l'intérieur, propositions et alertes sont repliées ; les gares se replient d'un clic.
  * Passages : vert = atteignable (départ ≥ marche + marge), orange = en se pressant, gris = trop tard.
  */
-const VERSION = "0.8.0";
+const VERSION = "0.8.1";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },
@@ -239,7 +239,11 @@ class TransportsIdfCard extends HTMLElement {
     }
     const msg = t.closest?.("[data-ligne-msg]");
     if (msg) {
-      this._ligneMsg = this._ligneMsg === msg.dataset.ligneMsg ? null : msg.dataset.ligneMsg;
+      // Le message ne s'affiche qu'à l'endroit du clic (résumé, proposition ou étape).
+      const ctx = msg.closest("[data-ctx]")?.dataset.ctx || "";
+      const meme = this._ligneMsg === msg.dataset.ligneMsg && this._msgCtx === ctx;
+      this._ligneMsg = meme ? null : msg.dataset.ligneMsg;
+      this._msgCtx = meme ? null : ctx;
       return this._rendu();
     }
     const lieu = t.closest?.("[data-lieu]");
@@ -359,7 +363,7 @@ class TransportsIdfCard extends HTMLElement {
   // ---- Briques visuelles ---------------------------------------------------
   _pli(cle, defaut, tete, corps, classe = "", extra = "") {
     const ouvert = this._ouvert(cle, defaut);
-    return `<div class="pli ${classe}${ouvert ? " ouvert" : ""}">
+    return `<div class="pli ${classe}${ouvert ? " ouvert" : ""}" data-ctx="${echapper(cle)}">
       <div class="pli-tete" data-bascule="${echapper(cle)}" data-defaut="${defaut ? 1 : 0}" role="button" tabindex="0" aria-expanded="${ouvert}">
         <span class="chevron">${ouvert ? "▾" : "▸"}</span>${tete}</div>${extra}
       ${ouvert ? `<div class="pli-corps">${corps}</div>` : ""}</div>`;
@@ -413,7 +417,8 @@ class TransportsIdfCard extends HTMLElement {
   }
 
   // Bloc affiché sous un résumé ou une étape quand on a cliqué sur le logo d'une de ses lignes.
-  _messageSi(etapes) {
+  _messageSi(etapes, ctx) {
+    if (ctx !== this._msgCtx) return "";
     const id = this._ligneMsg;
     const e = id && (etapes || []).find((x) => x.type === "transport" && x.ligne_id === id && x.alerte && x.alerte !== "normal");
     if (!e) return "";
@@ -424,7 +429,7 @@ class TransportsIdfCard extends HTMLElement {
     return `<div class="msg-ligne ${e.alerte}">${corps}</div>`;
   }
 
-  _etapes(it) {
+  _etapes(it, base = "") {
     const etapes = it?.etapes || [];
     if (!etapes.length) return `<div class="sous">${echapper(it?.resume || "")}</div>`;
     return `<ol class="etapes">${etapes
@@ -434,10 +439,11 @@ class TransportsIdfCard extends HTMLElement {
         if (e.type === "marche") return this._marche(e, n === etapes.length - 1);
         const suivants = e.suivants?.length ? `<span class="suivants" title="Départs suivants si tu le rates">+${e.suivants.join(", +")} min</span>` : "";
         const train = [e.voie ? `voie <b>${echapper(e.voie)}</b>` : "", e.mission ? `<b class="mission">${echapper(e.mission)}</b>` : ""].filter(Boolean).join(" · ");
-        return `<li><span class="h">${echapper(e.depart || "")}${suivants}</span>${this._logo(e, { alerte: e.alerte, cliquable: !!(e.alerte && e.alerte !== "normal") })}
+        const ctx = `${base}|e${n}`;
+        return `<li data-ctx="${echapper(ctx)}"><span class="h">${echapper(e.depart || "")}${suivants}</span>${this._logo(e, { alerte: e.alerte, cliquable: !!(e.alerte && e.alerte !== "normal") })}
           <span class="trajet-ligne"><span>${echapper(e.de)} → ${echapper(e.vers)}</span>
           <span class="sous">${e.direction ? `dir. ${echapper(e.direction)} · ` : ""}arr. ${echapper(e.arrivee || "?")}</span>
-          ${train ? `<span class="sous train">${train}</span>` : ""}${this._rame(e.rame)}${this._messageSi([e])}</span></li>`;
+          ${train ? `<span class="sous train">${train}</span>` : ""}${this._rame(e.rame)}${this._messageSi([e], ctx)}</span></li>`;
       })
       .join("")}</ol>`;
   }
@@ -488,7 +494,7 @@ class TransportsIdfCard extends HTMLElement {
     else if (r.erreur) resultats = `<div class="erreur">${echapper(r.erreur)}</div>`;
     else if (r.resultats) {
       resultats = r.resultats.length
-        ? r.resultats.map((it, n) => this._pli(`rech|${n}`, false, this._resumeIt(it), this._etapes(it), "proposition", this._ouvert(`rech|${n}`, false) ? "" : this._messageSi(it.etapes))).join("")
+        ? r.resultats.map((it, n) => this._pli(`rech|${n}`, false, this._resumeIt(it), this._etapes(it, `rech|${n}`), "proposition", this._ouvert(`rech|${n}`, false) ? "" : this._messageSi(it.etapes, `rech|${n}`))).join("")
         : `<div class="sous">Aucun itinéraire trouvé.</div>`;
     }
     return { suggDest: sugg("dest", r.lieux), suggDepuis: sugg("depuis", r.lieuxDepuis), resultats };
@@ -550,7 +556,7 @@ class TransportsIdfCard extends HTMLElement {
       if (vus.has(sig)) return;
       vus.add(sig);
       const cleP = `${id}|${cle}`;
-      corps.push(this._pli(cleP, false, this._resumeIt(it, note), this._etapes(it), classe, this._ouvert(cleP, false) ? "" : this._messageSi(it.etapes)));
+      corps.push(this._pli(cleP, false, this._resumeIt(it, note), this._etapes(it, cleP), classe, this._ouvert(cleP, false) ? "" : this._messageSi(it.etapes, cleP)));
     };
     const ecartHtml = (g) => {
       if (g == null || g === 0) return "";
@@ -567,9 +573,9 @@ class TransportsIdfCard extends HTMLElement {
       corps.push(`<div class="separation" aria-hidden="true"></div>`);
       const cleN = `${id}|nominal`;
       const note = `<span class="ecart">habituel · ${this._jour(nominal.jour)}</span>`;
-      corps.push(this._pli(cleN, false, this._resumeIt(nominal, note), this._etapes(nominal), "proposition nominal", this._ouvert(cleN, false) ? "" : this._messageSi(nominal.etapes)));
+      corps.push(this._pli(cleN, false, this._resumeIt(nominal, note), this._etapes(nominal, cleN), "proposition nominal", this._ouvert(cleN, false) ? "" : this._messageSi(nominal.etapes, cleN)));
     }
-    return this._pli(`${id}|trajet`, enVeille, tete, corps.join(""), `trajet ${classe}`, ouvert ? "" : this._messageSi(etapes));
+    return this._pli(`${id}|trajet`, enVeille, tete, corps.join(""), `trajet ${classe}`, ouvert ? "" : this._messageSi(etapes, `${id}|trajet`));
   }
 
   _htmlInfoTrafic() {
@@ -671,9 +677,9 @@ class TransportsIdfCard extends HTMLElement {
           <div class="resultats"></div>
         </div>
         <div class="trajets"></div>
-        <div class="info"></div>
         <div class="arrets"></div>
         <div class="aucun"></div>
+        <div class="info"></div>
       </ha-card>`;
     const q = (sel) => this.shadowRoot.querySelector(sel);
     this._el = {
