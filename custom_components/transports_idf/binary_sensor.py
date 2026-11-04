@@ -29,12 +29,7 @@ from .const import (
     T_SECTIONS,
     T_TYPE_HEURE,
 )
-from .coordinator import (
-    DUREE_MAINTENANT,
-    EtatTrajet,
-    TraficCoordinator,
-    depart_habituel,
-)
+from .trajets import DUREE_DIRECT, EtatTrajet, TraficCoordinator, heure_depart_maison, jours_trajet
 from .sensor import appareil
 
 
@@ -51,7 +46,7 @@ class TrajetSensor(CoordinatorEntity[TraficCoordinator], BinarySensorEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "perturbation"
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
-    _unrecorded_attributes = frozenset({"perturbations", "rechange", "sections", "reference", "alternatives", "conseil", "maintenant", "etapes_habituelles"})
+    _unrecorded_attributes = frozenset({"perturbations", "rechange", "sections", "nominal", "direct", "rappel", "etapes_habituelles", "detour"})
 
     def __init__(self, coord: TraficCoordinator, sous: ConfigSubentry) -> None:
         super().__init__(coord)
@@ -87,19 +82,19 @@ class TrajetSensor(CoordinatorEntity[TraficCoordinator], BinarySensorEntity):
             "destination": d.get(T_DEST_NOM),
             "type_heure": d.get(T_TYPE_HEURE, "depart"),
             "heure": d.get(T_HEURE),
-            "depart_habituel": depart_habituel(d),
-            "conseil": e.conseil,
-            "maintenant": e.maintenant
-            if e.maintenant and dt_util.utcnow() - dt_util.parse_datetime(e.maintenant["le"]) < DUREE_MAINTENANT
-            else None,
+            "depart_habituel": heure_depart_maison(d),
+            "jours": sorted(jours_trajet(d)),
             "avance": d.get(T_AVANCE),
             "en_veille": e.en_veille,
             "itineraire": d.get(T_RESUME),
             "sections": d.get(T_SECTIONS, []),
             "perturbations": e.perturbations,
+            "nominal": e.nominal,
+            "direct": e.direct if e.direct_le and (e.en_veille or dt_util.now().replace(tzinfo=None) - e.direct_le < DUREE_DIRECT) else [],
+            "direct_le": dt_util.as_utc(e.direct_le.replace(tzinfo=dt_util.get_default_time_zone())).isoformat() if e.direct_le else None,
+            "rappel": e.rappel,
             "rechange": e.rechange,
-            "reference": e.reference,
-            "alternatives": e.alternatives,
+            "detour": {k[7:]: v for k, v in d.items() if k.startswith("detour_")} or None,
             "origine_nom": d.get(T_ORIGINE_NOM) or self._nom_zone(d.get(T_ORIGINE)),
             "etapes_habituelles": self.coordinator.etapes_habituelles(self._sous_id),
             "alerte": pire_niveau(e.niveaux.values()),

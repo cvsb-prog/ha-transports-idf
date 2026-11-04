@@ -3,6 +3,19 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.8.0] - 2026-11-04
+
+### Ajouté
+
+- Jours du trajet : veille, alertes et trajet nominal seulement ces jours-là.
+- Détour avant les transports (adresse, mode, temps sur place, heure imposée, jours).
+- Trajet nominal du jour, comparé aux itinéraires du moment.
+
+### Modifié
+
+- Itinéraires toujours calculés au départ de maintenant.
+- Info trafic en bas de la carte.
+
 ## [0.7.1] - 2026-11-04
 
 ### Ajouté
