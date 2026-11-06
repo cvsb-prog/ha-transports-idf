@@ -3,6 +3,31 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.9.1] - 2026-11-06
+
+*Livraison non fonctionnelle (cartes sans fond (CARTO exige désormais une clé)) : version restée sur `dev`, non publiée sur `master`.*
+
+### Corrigé
+
+- Faux « en retard » le matin : le rappel retient tout départ qui arrive encore à l'heure.
+
+## [0.9.0] - 2026-11-06
+
+*Archive non conservée : son contenu est inclus dans la 0.9.1.*
+
+### Ajouté
+
+- Logo Île-de-France Mobilités (dossier brand/).
+- Formulaire de trajet : un seul champ « Départ », « Partir à / Arriver à », option jours fériés, étape « Itinéraire habituel » avec « Autre » pour saisir ses lignes.
+- Carte : grille alignée de l'info trafic, carte du trajet à pied avec son tracé (Leaflet embarqué).
+- Clic sur un logo de ligne du résumé : message affiché sous l'étape concernée.
+
+### Modifié
+
+- Veille d'un trajet fixée à 60 min.
+- Messages filtrés sur la portion empruntée et l'heure du trajet, dédoublonnés ; ascenseurs regroupés.
+- Exemples des formulaires et tests sans lien avec un trajet réel.
+
 ## [0.8.1] - 2026-11-04
 
 ### Corrigé

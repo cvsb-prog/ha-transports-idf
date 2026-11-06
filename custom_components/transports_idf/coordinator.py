@@ -17,8 +17,11 @@ from .api import (
     ClientPrim,
     ErreurJeton,
     ErreurPrim,
+    active_a,
+    cles_arret,
     date_navitia,
-    niveau_perturbation,
+    messages_affiches,
+    pertinente,
     pire_niveau,
     refs_candidates,
 )
@@ -26,7 +29,9 @@ from .const import (
     A_LIGNES,
     A_LIGNES_SUIVIES,
     A_MARCHE,
+    A_NOM,
     A_REFS,
+    A_ZONE_ID,
     CONF_ZONE,
     DEFAUTS,
     DOMAIN,
@@ -36,6 +41,7 @@ from .const import (
     LIGNES_BASE,
     OPT_DEBUT_NUIT,
     OPT_FIN_NUIT,
+    OPT_IGNORER_INFO,
     OPT_INTERVALLE_JOUR,
     OPT_INTERVALLE_NUIT,
     OPT_LIGNES_INTERET,
@@ -64,6 +70,7 @@ APRES_DEPART = timedelta(minutes=10)  # la veille se prolonge un peu après l'he
 VALIDITE_RECHANGE = timedelta(minutes=10)
 DUREE_MAINTENANT = timedelta(minutes=15)  # affichage du résultat de « Partir maintenant »
 INFO_TRAFIC = timedelta(minutes=5)
+CACHE_PERTURBATIONS = timedelta(minutes=5)
 
 
 def option(entry: ConfigEntry, cle: str) -> Any:
@@ -218,7 +225,10 @@ class Itineraires:
         self.hass = hass
         self.client = client
         self._cache: dict[tuple, tuple[datetime, list[datetime]]] = {}
-        self.niveau_ligne = lambda ligne_id: None  # remplacé par l'info trafic
+        self._cache_perts: dict[str, tuple[datetime, list[dict[str, Any]]]] = {}
+        # Perturbations d'une ligne suivie par l'info trafic (None : ligne non suivie) ; branchée au démarrage.
+        self.perturbations_info: Any = lambda ligne_id: None
+        self.ignorer_info = True
         self.rame = None  # PositionRame, branchée au démarrage
 
     async def suivants(self, its: list[dict[str, Any]]) -> None:
@@ -228,7 +238,6 @@ class Itineraires:
             for e in it.get("etapes") or []:
                 if e.get("type") != "transport":
                     continue
-                e["alerte"] = self.niveau_ligne(e.get("ligne_id"))
                 vise = date_navitia(e.get("depart_brut"))
                 if not (vise and e.get("de_point") and e.get("route_id")):
                     continue
@@ -276,14 +285,48 @@ class Itineraires:
                 e["voie"] = p.get("quai") or e.get("voie")
                 e["mission"] = e.get("mission") or (p.get("mission") if p.get("mission") and len(p["mission"]) == 4 else None)
 
-    def alertes(self, its: list[dict[str, Any]], niveaux: dict[str, str]) -> None:
-        """État des lignes de chaque étape, et où monter dans la rame quand on le sait."""
+    def _connues(self, ligne_id: str | None) -> list[dict[str, Any]] | None:
+        """Perturbations d'une ligne déjà connues (info trafic, ou lecture récente à part)."""
+        if not ligne_id:
+            return []
+        connues = self.perturbations_info(ligne_id)
+        if connues is not None:
+            return connues
+        cache = self._cache_perts.get(ligne_id)
+        if cache and dt_util.utcnow() - cache[0] < CACHE_PERTURBATIONS:
+            return cache[1]
+        return None
+
+    async def alertes(self, its: list[dict[str, Any]], extra: dict[str, list[dict[str, Any]]] | None = None) -> None:
+        """Messages trafic qui concernent chaque étape (portion empruntée, heure de passage), et où monter dans la rame."""
+        extra = extra or {}
+        manquantes = sorted(
+            {e.get("ligne_id") for it in its for e in it.get("etapes") or [] if e.get("type") == "transport" and e.get("ligne_id")}
+            - set(extra)
+        )
+        manquantes = [l for l in manquantes if self._connues(l) is None]
+        if manquantes:
+            reponses = await asyncio.gather(*(self.client.perturbations_ligne(l) for l in manquantes), return_exceptions=True)
+            for l, r in zip(manquantes, reponses, strict=True):
+                if isinstance(r, ErreurJeton):
+                    raise r
+                self._cache_perts[l] = (dt_util.utcnow(), r if isinstance(r, list) else [])
+            if len(self._cache_perts) > 200:
+                self._cache_perts.clear()
         for it in its:
             etapes = it.get("etapes") or []
             for n, e in enumerate(etapes):
                 if e.get("type") != "transport":
                     continue
-                e["alerte"] = niveaux.get(e.get("ligne_id")) or self.niveau_ligne(e.get("ligne_id"))
+                lid = e.get("ligne_id")
+                vues: dict[str, dict[str, Any]] = {}
+                for p in (self._connues(lid) or []) + extra.get(lid, []):
+                    vues.setdefault(p.get("id") or p.get("titre"), p)
+                quand = date_navitia(e.get("depart_brut"))
+                touchent = [p for p in vues.values() if pertinente(p, e, quand)]
+                e["messages"] = messages_affiches(touchent, self.ignorer_info)
+                niveau = pire_niveau(m["niveau"] for m in e["messages"] if m["niveau"] != "equipement")
+                e["alerte"] = None if niveau == "normal" else niveau
                 if self.rame is not None:
                     suite = etapes[n + 1 :]
                     suivante = next((x for x in suite if x.get("type") == "transport"), None)
@@ -353,10 +396,21 @@ class InfoTraficCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         self.reseau: list[dict[str, Any]] = []
         self.reseau_le: datetime | None = None
         self.niveaux: dict[str, str] = {}
+        self.par_ligne: dict[str, list[dict[str, Any]]] = {}  # perturbations (portée, périodes) par ligne affichée
 
     def niveau_ligne(self, ligne_id: str | None) -> str | None:
         n = self.niveaux.get(ligne_id or "")
         return n if n and n != "normal" else None
+
+    def perturbations(self, ligne_id: str) -> list[dict[str, Any]] | None:
+        return self.par_ligne.get(ligne_id) if self.data is not None and ligne_id in self.niveaux else None
+
+    def _arrets_suivis(self) -> set[str]:
+        cles: set[str] = set()
+        for s in self.config_entry.subentries.values():
+            if s.subentry_type == SOUS_ARRET:
+                cles |= cles_arret({"id": s.data.get(A_ZONE_ID), "name": s.data.get(A_NOM)})
+        return cles
 
     def _lignes_suivies(self) -> dict[str, dict[str, Any]]:
         """Lignes ajoutées par l'utilisateur, ou utilisées par ses trajets et ses arrêts."""
@@ -427,13 +481,16 @@ class InfoTraficCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
             meta = {**l, **{k: v for k, v in index_id.get(lid, {}).items() if v}}
             lignes.append({**meta, "groupe": groupe_ligne(meta), "base": False, "interet": l.get("interet", False)})
 
-        self.niveaux = {}
+        self.niveaux, self.par_ligne = {}, {}
+        ignorer_info = option(self.config_entry, OPT_IGNORER_INFO)
+        maintenant_local = dt_util.now().replace(tzinfo=None)
+        suivis = self._arrets_suivis()
         for l in lignes:
             ps = [par_id[i] for i in par_ligne.get(l["id"], set()) if i in par_id]
-            ps = [{**p, "niveau": niveau_perturbation(p)} for p in ps]
-            ps = [p for p in ps if p["niveau"]]
-            ps.sort(key=lambda p: -{"interrompu": 3, "perturbe": 2, "travaux": 1}.get(p["niveau"], 0))
-            l["perturbations"] = [{k: p.get(k) for k in ("id", "titre", "message", "niveau", "cause", "fin")} for p in ps]
-            l["etat"] = pire_niveau(p["niveau"] for p in ps)
+            self.par_ligne[l["id"]] = ps
+            # Panneau de la ligne : messages en cours ; les équipements (ascenseurs…) seulement aux arrêts suivis.
+            en_cours = [p for p in ps if active_a(p, maintenant_local) and (not p.get("equipement") or set(p.get("arrets") or []) & suivis)]
+            l["perturbations"] = messages_affiches(en_cours, ignorer_info)
+            l["etat"] = pire_niveau(m["niveau"] for m in l["perturbations"] if m["niveau"] != "equipement")
             self.niveaux[l["id"]] = l["etat"]
         return lignes

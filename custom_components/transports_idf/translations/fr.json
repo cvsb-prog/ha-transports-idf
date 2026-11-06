@@ -140,16 +140,14 @@
       "step": {
         "user": {
           "title": "Ajouter un trajet",
-          "description": "Un trajet habituel d'une personne. Les itinéraires proposés sont toujours calculés au départ de maintenant ; l'heure sert au rappel « pars à … » et au trajet nominal. Toutes les lignes de l'itinéraire préféré (correspondances comprises) sont surveillées.",
+          "description": "Un trajet habituel d'une personne. Les itinéraires affichés sont toujours calculés au départ de maintenant ; l'heure sert au rappel « pars à … » et au trajet habituel. Le suivi commence 1 h avant le départ habituel.",
           "data": {
             "nom": "Nom du trajet",
             "personne": "Personne",
-            "origine": "Départ (zone)",
+            "recherche_depart": "Départ (adresse, arrêt) — vide : la maison",
             "recherche": "Destination (arrêt, adresse, lieu)",
+            "type_heure": "Quand",
             "heure_depart": "Heure",
-            "avance": "Veille avant le départ de la maison",
-            "type_heure": "Cette heure est…",
-            "recherche_depart": "Départ précis (adresse, arrêt) — facultatif",
             "jours": "Jours du trajet",
             "detour_mode": "Détour : comment tu y vas",
             "detour_duree": "Détour : temps pour y aller",
@@ -160,10 +158,9 @@
             "recherche_detour": "Détour avant les transports (adresse, lieu) — facultatif"
           },
           "data_description": {
-            "type_heure": "Heure d'arrivée cible : la veille commence avant le départ habituel ; si une perturbation ou un retard oblige à partir plus tôt pour arriver à l'heure, une alerte le dit. Heure de départ : on compare l'arrivée des itinéraires partant à cette heure.",
-            "recherche_depart": "Laisse vide pour partir de la zone choisie au-dessus.",
-            "jours": "La veille, les alertes et le trajet nominal ne concernent que ces jours.",
-            "recherche_detour": "Ex. une école : tu y passes avant de prendre les transports, certains jours."
+            "jours": "Le trajet est suivi ces jours-là (rappel, alertes, trajet habituel). « Jours fériés » coché : aussi les jours fériés ; sinon ils sont sautés.",
+            "recherche_detour": "Ex. une crèche ou une boulangerie : tu y passes avant de prendre les transports, certains jours.",
+            "recherche_depart": "Tu choisiras ensuite dans une liste : la maison en premier, tes autres zones, puis les lieux trouvés."
           }
         },
         "destination": {
@@ -173,23 +170,21 @@
           }
         },
         "itineraire": {
-          "title": "Choisir l'itinéraire",
-          "description": "Itinéraires proposés vers {destination} au prochain jour ouvré (départ → arrivée). Les lignes de celui choisi seront surveillées et son heure de départ sert de départ habituel.",
+          "title": "Itinéraire habituel",
+          "description": "Itinéraires vers {destination} au prochain jour ouvré (départ → arrivée). Ses lignes seront surveillées et son heure de départ sert de départ habituel. « Autre » : indique toi-même les lignes.",
           "data": {
             "itineraire": "Itinéraire"
           }
         },
         "reconfigure": {
           "title": "Modifier le trajet",
-          "description": "Destination : {destination}\nItinéraire suivi : {itineraire}",
+          "description": "Départ : {depart}\nDestination : {destination}\nItinéraire habituel : {itineraire}",
           "data": {
             "nom": "Nom du trajet",
             "personne": "Personne",
-            "origine": "Départ (zone)",
+            "recherche_depart": "Nouveau départ (adresse, arrêt) — vide : inchangé",
+            "type_heure": "Quand",
             "heure_depart": "Heure",
-            "avance": "Veille avant le départ de la maison",
-            "recalculer": "Choisir un autre itinéraire",
-            "type_heure": "Cette heure est…",
             "jours": "Jours du trajet",
             "detour_mode": "Détour : comment tu y vas",
             "detour_duree": "Détour : temps pour y aller",
@@ -197,12 +192,12 @@
             "detour_heure": "Détour : heure d'arrivée imposée",
             "detour_jours": "Détour : jours concernés",
             "supprimer_detour": "Supprimer le détour",
-            "recherche_detour": "Détour avant les transports (adresse, lieu) — facultatif"
+            "recherche_detour": "Détour avant les transports (adresse, lieu) — facultatif",
+            "recalculer": "Choisir un autre itinéraire habituel"
           },
           "data_description": {
-            "type_heure": "Heure d'arrivée cible : la veille commence avant le départ habituel ; si une perturbation ou un retard oblige à partir plus tôt pour arriver à l'heure, une alerte le dit. Heure de départ : on compare l'arrivée des itinéraires partant à cette heure.",
-            "jours": "La veille, les alertes et le trajet nominal ne concernent que ces jours.",
-            "recherche_detour": "Ex. une école : tu y passes avant de prendre les transports, certains jours."
+            "jours": "Le trajet est suivi ces jours-là (rappel, alertes, trajet habituel). « Jours fériés » coché : aussi les jours fériés ; sinon ils sont sautés.",
+            "recherche_detour": "Ex. une crèche ou une boulangerie : tu y passes avant de prendre les transports, certains jours."
           }
         },
         "depart": {
@@ -228,14 +223,28 @@
             "detour_jours": "Jours du détour"
           },
           "data_description": {
-            "detour_heure": "Ex. ouverture de l'école : tu y arrives à cette heure, puis tu repars après le temps sur place."
+            "detour_heure": "Ex. ouverture de la crèche : tu y arrives à cette heure, puis tu repars après le temps sur place."
+          }
+        },
+        "itineraire_autre": {
+          "title": "Mon itinéraire",
+          "description": "Lignes à emprunter vers {destination}, dans l'ordre, séparées par des virgules.",
+          "data": {
+            "lignes": "Lignes",
+            "correspondance": "Arrêt de correspondance — facultatif"
+          },
+          "data_description": {
+            "lignes": "Ex. RER C, M13 ou T6, 192. Précise le mode si besoin (RER, M, T, bus).",
+            "correspondance": "Ex. Invalides : seuls les itinéraires qui changent à cet arrêt sont gardés."
           }
         }
       },
       "error": {
         "jeton_invalide": "Jeton refusé par PRIM.",
         "injoignable": "PRIM ne répond pas. Réessaie dans un instant.",
-        "aucun_resultat": "Aucun lieu trouvé. Essaie un autre nom."
+        "aucun_resultat": "Aucun lieu trouvé. Essaie un autre nom.",
+        "ligne_inconnue": "Ligne introuvable : vérifie son nom (ex. RER C, M13, T6, 192).",
+        "aucun_itineraire_lignes": "Aucun itinéraire avec ces lignes à cette heure."
       },
       "abort": {
         "aucun_itineraire": "Aucun itinéraire en transports trouvé pour ce trajet.",
@@ -300,6 +309,10 @@
         "type_heure": {
           "name": "Type d'heure",
           "description": "depart ou arrivee."
+        },
+        "date": {
+          "name": "Date",
+          "description": "Jour du trajet. Par défaut : aujourd'hui (demain si l'heure est passée)."
         }
       }
     }
