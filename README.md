@@ -3,7 +3,7 @@
 Intégration Home Assistant pour les transports en commun d'Île-de-France, à partir des API
 [PRIM](https://prim.iledefrance-mobilites.fr/) d'Île-de-France Mobilités, avec sa carte de tableau de bord.
 
-Version actuelle : **0.8.1** (voir le [CHANGELOG](CHANGELOG.md)).
+Version actuelle : **0.9.1** (voir le [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctionnalités
 
@@ -15,6 +15,8 @@ Version actuelle : **0.8.1** (voir le [CHANGELOG](CHANGELOG.md)).
 - **Position dans la rame** et **sortie conseillée** (jeux de données RATP / IDFM livrés, mis à jour chaque mois).
 - Voie et mission des RER, panneau de sortie à l'arrivée.
 - **Trajet nominal** du jour, **jours du trajet** et **détour** avant les transports.
+- Messages de perturbation filtrés sur la portion empruntée, le sens et l'heure du trajet ; jours fériés.
+- Carte du trajet à pied (Leaflet).
 
 ## Carte de tableau de bord
 
@@ -35,10 +37,13 @@ Mise à jour : remplacer le dossier, redémarrer, actualiser le navigateur. Rég
 ## Données envoyées
 
 - PRIM : identifiants d'arrêts et de lignes, et pour les itinéraires les positions de départ et d'arrivée.
+- Fond de carte (OpenStreetMap ou CARTO) : les tuiles de la zone affichée.
 
 ## Données et licences tierces
 
 - RATP « Positionnement dans la rame » et IDFM « Référentiel des arrêts : Accès » : jeux de données ouverts, copie livrée dans `donnees/`.
+- [Leaflet](https://leafletjs.com/) 1.9.4 (BSD-2-Clause), embarqué dans `www/leaflet/`.
+- Logo Île-de-France Mobilités dans `brand/`.
 - Données temps réel et calcul d'itinéraire : PRIM, Île-de-France Mobilités.
 
 ## Licence

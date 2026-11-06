@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 import voluptuous as vol
@@ -74,6 +74,7 @@ SCHEMA_ITINERAIRE = vol.Schema(
         vol.Required("arrivee"): cv.string,
         vol.Optional("depart"): cv.string,  # lieu Navitia, zone (zone.xxx) ; défaut : zone de l'intégration
         vol.Optional("heure"): cv.string,  # « HH:MM » ; défaut : maintenant
+        vol.Optional("date"): cv.date,  # jour du trajet ; défaut : aujourd'hui (demain si l'heure est passée)
         vol.Optional("type_heure", default="depart"): vol.In(["depart", "arrivee"]),
     }
 )
@@ -107,11 +108,17 @@ async def _itineraire(appel: ServiceCall) -> ServiceResponse:
     if depart.startswith("zone."):
         lat, lon = coordonnees_zone(hass, depart)
         depart = f"{lon};{lat}"
-    quand = dt_util.now().replace(tzinfo=None, second=0, microsecond=0)
+    maintenant = dt_util.now().replace(tzinfo=None, second=0, microsecond=0)
+    quand = maintenant
+    if d.get("date") and not d.get("heure"):
+        quand = maintenant if d["date"] == maintenant.date() else datetime.combine(d["date"], time(8, 0))
     if d.get("heure"):
         h, m = (int(x) for x in d["heure"].split(":")[:2])
-        cible = quand.replace(hour=h, minute=m)
-        quand = cible if cible >= quand - timedelta(minutes=1) else cible + timedelta(days=1)
+        if d.get("date"):
+            quand = datetime.combine(d["date"], time(h, m))
+        else:
+            cible = maintenant.replace(hour=h, minute=m)
+            quand = cible if cible >= maintenant - timedelta(minutes=1) else cible + timedelta(days=1)
     represente = "arrival" if d["type_heure"] == "arrivee" else "departure"
     calcul = entree.runtime_data.calcul
     try:
@@ -119,7 +126,10 @@ async def _itineraire(appel: ServiceCall) -> ServiceResponse:
     except ErreurPrim as err:
         raise HomeAssistantError(f"Calculateur PRIM indisponible : {err}") from err
     its = [i for i in its if i["etapes"]][:4]
-    calcul.alertes(its, {})
+    try:
+        await calcul.alertes(its)
+    except ErreurPrim as err:
+        raise HomeAssistantError(f"Info trafic PRIM indisponible : {err}") from err
     await calcul.suivants(its)
     return {"itineraires": its}
 
@@ -135,7 +145,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         return True
     dossier = Path(__file__).parent
     await hass.http.async_register_static_paths(
-        [StaticPathConfig(URL_CARTE, str(dossier / "www" / "transports-card.js"), False)]
+        [
+            StaticPathConfig(URL_CARTE, str(dossier / "www" / "transports-card.js"), False),
+            # Leaflet (cartes des trajets à pied), servi avec la carte : rien à charger depuis Internet.
+            StaticPathConfig(f"/{DOMAIN}/leaflet", str(dossier / "www" / "leaflet"), True),
+        ]
     )
     add_extra_js_url(hass, f"{URL_CARTE}?v={VERSION}")
     return True
@@ -147,7 +161,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TransportsConfigEntry) -
     passages = PassagesCoordinator(hass, entry, client)
     info = InfoTraficCoordinator(hass, entry, client)
     trafic = TraficCoordinator(hass, entry, client, calcul)
-    calcul.niveau_ligne = info.niveau_ligne
+    calcul.perturbations_info = info.perturbations
     calcul.rame = PositionRame(hass)
     await calcul.rame.async_charger()
     await passages.async_config_entry_first_refresh()
