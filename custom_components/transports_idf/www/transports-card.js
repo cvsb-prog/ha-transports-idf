@@ -5,7 +5,7 @@
  * à l'intérieur, propositions et alertes sont repliées ; les gares se replient d'un clic.
  * Passages : vert = atteignable (départ ≥ marche + marge), orange = en se pressant, gris = trop tard.
  */
-const VERSION = "0.9.1";
+const VERSION = "0.9.2";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },
@@ -296,7 +296,7 @@ class TransportsIdfCard extends HTMLElement {
     try {
       await this._hass.callService("transports_idf", "partir_maintenant", { trajet: id });
     } catch (err) {
-      this._erreurs.set(id, err?.message || "Calcul impossible");
+      this._erreurs.set(id, err?.message || (err?.code ? `Calcul impossible (${err.code})` : "Calcul impossible : PRIM n'a pas répondu"));
       setTimeout(() => { this._erreurs.delete(id); this._rendu(); }, 10000);
     } finally {
       this._enCours.delete(id);
@@ -818,8 +818,7 @@ class TransportsIdfCard extends HTMLElement {
           <div class="options-recherche" hidden>
             <input class="depuis" type="search" placeholder="Depuis : la maison" autocomplete="off" aria-label="Départ">
             <select class="mode" aria-label="Quand"><option value="maintenant">Partir maintenant</option><option value="depart">Partir à</option><option value="arrivee">Arriver à</option></select>
-            <input class="heure" type="time" hidden aria-label="Heure">
-            <input class="date" type="date" hidden aria-label="Date">
+            <input class="quand" type="datetime-local" step="60" hidden aria-label="Jour et heure">
           </div>
           <div class="sugg-depuis"></div>
           <div class="resultats"></div>
@@ -832,7 +831,7 @@ class TransportsIdfCard extends HTMLElement {
     const q = (sel) => this.shadowRoot.querySelector(sel);
     this._el = {
       style: q("style"), titre: q(".titre"), recherche: q(".recherche"), dest: q(".dest"), depuis: q(".depuis"), mode: q(".mode"),
-      heure: q(".heure"), date: q(".date"), effacer: q(".effacer"), options: q(".options-recherche"), suggDest: q(".sugg-dest"),
+      quand: q(".quand"), effacer: q(".effacer"), options: q(".options-recherche"), suggDest: q(".sugg-dest"),
       suggDepuis: q(".sugg-depuis"), resultats: q(".resultats"), trajets: q(".trajets"), info: q(".info"), arrets: q(".arrets"), aucun: q(".aucun"),
     };
     this._el.dest.addEventListener("input", (e) => this._saisie("dest", e.target.value));
@@ -843,17 +842,15 @@ class TransportsIdfCard extends HTMLElement {
         const d = new Date(Date.now() + (this._rech.mode === "arrivee" ? 45 : 0) * 60000);
         this._rech.heure = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
         this._rech.date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-        this._el.heure.value = this._rech.heure;
-        this._el.date.value = this._rech.date;
+        this._el.quand.value = `${this._rech.date}T${this._rech.heure}`;
       }
       this._calculer();
     });
-    this._el.heure.addEventListener("change", (e) => {
-      this._rech.heure = e.target.value;
-      this._calculer();
-    });
-    this._el.date.addEventListener("change", (e) => {
-      this._rech.date = e.target.value;
+    this._el.quand.addEventListener("change", (e) => {
+      const [jour, heure] = String(e.target.value || "").split("T");
+      if (!jour || !heure) return;
+      this._rech.date = jour;
+      this._rech.heure = heure.slice(0, 5);
       this._calculer();
     });
     this._blocs.clear();
@@ -895,8 +892,7 @@ class TransportsIdfCard extends HTMLElement {
       const h = this._htmlRecherche();
       this._el.options.hidden = !(r.dest || r.texte || r.resultats);
       this._el.effacer.hidden = !(r.texte || r.resultats);
-      this._el.heure.hidden = r.mode === "maintenant";
-      this._el.date.hidden = r.mode === "maintenant";
+      this._el.quand.hidden = r.mode === "maintenant";
       this._maj(this._el.suggDest, h.suggDest);
       this._maj(this._el.suggDepuis, h.suggDepuis);
       this._maj(this._el.resultats, h.resultats);
@@ -980,12 +976,14 @@ class TransportsIdfCard extends HTMLElement {
       .champ { display: flex; align-items: center; gap: 8px; background: var(--ti-fond); border-radius: 22px; padding: 6px 12px; }
       .champ input { flex: 1; min-width: 0; border: 0; background: transparent; font: inherit; color: var(--primary-text-color); outline: none; }
       .effacer { border: 0; background: transparent; color: var(--secondary-text-color); cursor: pointer; font-size: 1em; }
-      .options-recherche { display: flex; flex-wrap: wrap; gap: 6px; }
+      .options-recherche { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 6px; }
       .options-recherche input, .options-recherche select {
         font: inherit; font-size: .9em; color: var(--primary-text-color); background: var(--ti-fond);
         border: 1px solid var(--ti-trait); border-radius: 16px; padding: 4px 10px; min-width: 0;
       }
-      .options-recherche .depuis { flex: 1 1 160px; }
+      .options-recherche .depuis { grid-column: 1 / -1; }
+      .options-recherche:has(.quand[hidden]) { grid-template-columns: minmax(0, 1fr); }
+      .options-recherche .quand { width: 100%; box-sizing: border-box; }
       .suggestions { list-style: none; margin: 0; padding: 4px; border: 1px solid var(--ti-trait); border-radius: 10px; display: flex; flex-direction: column; }
       .suggestions li { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
       .suggestions li:hover { background: var(--ti-fond); }

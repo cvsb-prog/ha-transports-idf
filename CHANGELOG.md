@@ -3,6 +3,20 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.9.2] - 2026-11-06
+
+*Livraison non fonctionnelle (cartes toujours sans fond) : version restée sur `dev`, non publiée sur `master`.*
+
+### Ajouté
+
+- Formulaires : pictogrammes [RER] [TRAIN] [M] [TRAM] [BUS] ; « inclure les jours fériés ».
+- « Calcul impossible » : cause affichée et journalisée.
+
+### Modifié
+
+- Recherche : un seul sélecteur jour + heure.
+- Messages gardés selon le sens de l'étape.
+
 ## [0.9.1] - 2026-11-06
 
 *Livraison non fonctionnelle (cartes sans fond (CARTO exige désormais une clé)) : version restée sur `dev`, non publiée sur `master`.*

@@ -444,7 +444,7 @@ class ArretFlow(_Base):
 
 # ---------------------------------------------------------------------------
 JOURS = [SelectOptionDict(value=str(n), label=j) for n, j in enumerate(["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"])]
-JOURS_ET_FERIES = [*JOURS, SelectOptionDict(value=JOUR_FERIE, label="jours fériés")]
+JOURS_ET_FERIES = [*JOURS, SelectOptionDict(value=JOUR_FERIE, label="inclure les jours fériés")]
 MODES = [
     SelectOptionDict(value="marche", label="🚶 À pied"),
     SelectOptionDict(value="velo", label="🚲 À vélo"),

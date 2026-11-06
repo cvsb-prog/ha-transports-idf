@@ -158,7 +158,7 @@
             "recherche_detour": "Détour avant les transports (adresse, lieu) — facultatif"
           },
           "data_description": {
-            "jours": "Le trajet est suivi ces jours-là (rappel, alertes, trajet habituel). « Jours fériés » coché : aussi les jours fériés ; sinon ils sont sautés.",
+            "jours": "Le trajet est suivi ces jours-là (rappel, alertes, trajet habituel). « Inclure les jours fériés » coché : aussi les jours fériés ; sinon ils sont sautés.",
             "recherche_detour": "Ex. une crèche ou une boulangerie : tu y passes avant de prendre les transports, certains jours.",
             "recherche_depart": "Tu choisiras ensuite dans une liste : la maison en premier, tes autres zones, puis les lieux trouvés."
           }
@@ -196,7 +196,7 @@
             "recalculer": "Choisir un autre itinéraire habituel"
           },
           "data_description": {
-            "jours": "Le trajet est suivi ces jours-là (rappel, alertes, trajet habituel). « Jours fériés » coché : aussi les jours fériés ; sinon ils sont sautés.",
+            "jours": "Le trajet est suivi ces jours-là (rappel, alertes, trajet habituel). « Inclure les jours fériés » coché : aussi les jours fériés ; sinon ils sont sautés.",
             "recherche_detour": "Ex. une crèche ou une boulangerie : tu y passes avant de prendre les transports, certains jours."
           }
         },
