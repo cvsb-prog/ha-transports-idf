@@ -518,6 +518,11 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
                 await self._direct(t, etat, maintenant)
             except ConfigEntryAuthFailed as err:
                 raise HomeAssistantError("Jeton PRIM refusé") from err
+            except HomeAssistantError:
+                raise
+            except Exception as err:
+                _LOGGER.exception("Calcul au départ de maintenant impossible pour %s", t.title)
+                raise HomeAssistantError(f"Calcul impossible ({type(err).__name__} : {err or 'sans détail'}) — voir le journal") from err
             self.async_update_listeners()
         return {"le": dt_util.utcnow().isoformat(), "itineraires": etat.direct}
 

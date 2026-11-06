@@ -329,14 +329,15 @@ def modes_zone(objet: dict[str, Any]) -> list[str]:
 
 
 ICONES_LIEU = {"address": "📍", "poi": "⭐", "administrative_region": "🏙️"}
-ICONES_GROUPE = {"RER": "🚆", "Train": "🚆", "Métro": "Ⓜ️", "Tram": "🚊", "Bus": "🚌"}
+# Mêmes mentions que les pictogrammes de la carte (les listes des formulaires n'affichent que du texte).
+ICONES_GROUPE = {"RER": "[RER]", "Train": "[TRAIN]", "Métro": "[M]", "Tram": "[TRAM]", "Bus": "[BUS]"}
 
 
 def icone_lieu(lieu: dict[str, Any]) -> str:
-    """Pictogrammes (emoji) d'un lieu pour les listes des formulaires : modes d'un arrêt, adresse, lieu…"""
+    """Mentions d'un lieu pour les listes des formulaires : modes d'un arrêt ([RER] [M] [BUS]…), adresse, lieu…"""
     if lieu.get("type") == "stop_area":
         icones = list(dict.fromkeys(ICONES_GROUPE[g] for g in lieu.get("modes") or [] if g in ICONES_GROUPE))
-        return "".join(icones) or "🚏"
+        return " ".join(icones) or "🚏"
     return ICONES_LIEU.get(lieu.get("type") or "", "📍")
 
 
@@ -438,6 +439,24 @@ def cles_arret(objet: Any) -> set[str]:
                 cles.add("n:" + _nom_arret(zone["name"]))
     cles.discard("n:")
     return cles
+
+
+def cles_perturbation(objet: Any) -> set[str]:
+    """Clés d'un arrêt cité par une perturbation.
+
+    Un point d'arrêt (quai, propre à un sens) ne correspond qu'à lui-même : un arrêt non desservi
+    « direction X » ne concerne pas l'autre sens. Une zone d'arrêt garde son identifiant et son nom.
+    """
+    if not isinstance(objet, dict):
+        return set()
+    type_ = objet.get("embedded_type")
+    interieur = objet.get(type_) if type_ else None
+    point = interieur if type_ == "stop_point" and isinstance(interieur, dict) else objet.get("stop_point") if isinstance(objet.get("stop_point"), dict) else None
+    if point is None and str(objet.get("id") or "").startswith("stop_point:"):
+        point = objet
+    if point is not None and point.get("id"):
+        return {point["id"]}
+    return cles_arret(objet)
 
 
 def _trace(section: dict[str, Any], maxi: int = 150) -> list[list[float]]:
@@ -692,7 +711,7 @@ def _portees(donnees: Any) -> dict[str, set[str]]:
             interieur = po.get(type_) or {}
             ids = {l.get("id") for o in (po, interieur) for l in (o.get("links") or []) if l.get("type") == "disruption" and l.get("id")}
             for i in ids:
-                sortie.setdefault(i, set()).update(cles_arret(po))
+                sortie.setdefault(i, set()).update(cles_perturbation(po))
     return sortie
 
 
@@ -725,23 +744,27 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
         corps = max((_texte(m.get("text")) for m in messages), key=len, default="")
         gravite = d.get("severity") or {}
         ident = d.get("id") or d.get("disruption_id")
-        lignes, troncon, arrets, ligne_entiere = [], set(), set(), False
+        lignes, troncon, arrets, routes, ligne_entiere = [], set(), set(), set(), False
         for o in d.get("impacted_objects", []) or []:
             po = o.get("pt_object") or {}
             type_ = po.get("embedded_type")
-            arrets_o = set().union(*(cles_arret(x.get("stop_point") or x.get("stop_area") or x) for x in o.get("impacted_stops") or [])) if o.get("impacted_stops") else set()
+            arrets_o = set().union(*(cles_perturbation(x) for x in o.get("impacted_stops") or [])) if o.get("impacted_stops") else set()
             if type_ == "line":
                 lignes.append(po.get("id"))
+            if type_ == "route" and po.get("id"):
+                routes.add(po["id"])
             if type_ in ("line", "route", "network"):
                 section = o.get("impacted_section") or o.get("impacted_rail_section")
                 if section:
-                    troncon |= cles_arret(section.get("from")) | cles_arret(section.get("to")) | arrets_o
+                    routes |= {r.get("id") for r in section.get("routes") or [] if r.get("id")}
+                    # Les quais touchés (propres à un sens) s'ils sont donnés, sinon les deux bouts du tronçon.
+                    troncon |= arrets_o or (cles_arret(section.get("from")) | cles_arret(section.get("to")))
                 elif arrets_o:
                     arrets |= arrets_o
                 else:
                     ligne_entiere = True
             elif type_ in ("stop_area", "stop_point"):
-                arrets |= cles_arret(po) | arrets_o
+                arrets |= cles_perturbation(po) | arrets_o
         if ligne_entiere and not troncon and not arrets and rattachees.get(ident):
             # Rattachée à la ligne, mais publiée sur certains arrêts seulement (ex. station non desservie).
             ligne_entiere, arrets = False, set(rattachees[ident])
@@ -761,6 +784,7 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
                 # Des arrêts ou un tronçon précisés l'emportent sur la simple mention de la ligne.
                 "portee": "troncon" if troncon else ("arrets" if arrets else "ligne"),
                 "troncon": sorted(troncon),
+                "routes": sorted(routes),
                 "arrets": sorted(arrets),
                 "equipement": bool(_EQUIPEMENT.search(f"{titre} {corps[:200]}")),
                 "perimee": perimee_selon_texte(titre, maintenant.date()),
@@ -779,6 +803,8 @@ def pertinente(p: dict[str, Any], etape: dict[str, Any], quand: datetime | None 
     """
     if quand is not None and not active_a(p, quand):
         return False
+    if p.get("routes") and etape.get("route_id") and etape["route_id"] not in p["routes"]:
+        return False  # l'autre sens de la ligne
     if p.get("portee", "ligne") == "ligne":
         return True
     bouts, parcourus = set(etape.get("bouts") or []), set(etape.get("arrets") or [])
