@@ -48,11 +48,13 @@
           "intervalle_nuit": "Rafraîchissement la nuit",
           "debut_nuit": "Début de la nuit",
           "fin_nuit": "Fin de la nuit",
-          "ignorer_information": "Ignorer les simples messages d'information"
+          "ignorer_information": "Ignorer les simples messages d'information",
+          "cle_carto": "Clé CARTO pour les cartes (facultatif)"
         },
         "data_description": {
           "marge": "Un passage est « atteignable » si son départ est dans au moins (temps de marche + marge), « en se pressant » s'il reste au moins le temps de marche, sinon « trop tard ».",
-          "ignorer_information": "Les trajets ne passent en « perturbé » que pour un vrai impact (interruption, retards, déviation…)."
+          "ignorer_information": "Les trajets ne passent en « perturbé » que pour un vrai impact (interruption, retards, déviation…).",
+          "cle_carto": "Vide : fond OpenStreetMap (assombri avec le thème sombre). Avec une clé gratuite demandée sur carto.com/basemaps/apikey : fond CARTO, plus sobre, clair ou sombre selon le thème."
         }
       },
       "lignes": {

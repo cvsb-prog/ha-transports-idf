@@ -117,7 +117,8 @@ class ClientPrim:
         autorises: list[str] | None = None,
         represente: str = "departure",
     ) -> list[dict[str, Any]]:
-        params = [("from", depart), ("to", arrivee), ("min_nb_journeys", "3"), ("count", "5")]
+        # data_freshness=realtime : le calculateur tient compte des perturbations (arrêts non desservis, travaux).
+        params = [("from", depart), ("to", arrivee), ("min_nb_journeys", "3"), ("count", "5"), ("data_freshness", "realtime")]
         if quand is not None:
             params += [("datetime", quand.strftime("%Y%m%dT%H%M%S")), ("datetime_represents", represente)]
         params += [("forbidden_uris[]", i) for i in (interdits or [])]
@@ -793,6 +794,31 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
     return [p for p in sortie if not p["perimee"]]
 
 
+def concerne_ligne(p: dict[str, Any], ligne_id: str | None) -> bool:
+    """line_reports d'une ligne renvoie aussi les perturbations des autres lignes qui passent par ses arrêts."""
+    return not p.get("lignes") or ligne_id in p["lignes"]
+
+
+_DIRECTION = re.compile(r"\b(?:en\s+)?direction(?:s)?\s+(?:de\s+|d['’]\s*|du\s+|des\s+)?([A-ZÀ-Ý0-9][^.,;:()\n]{2,60})")
+
+
+def directions_citees(texte: str) -> list[str]:
+    """« … non desservis en direction de Saint-Denis Université. » → ["saint denis universite"]."""
+    sortie = []
+    for m in _DIRECTION.finditer(texte or ""):
+        nom = re.split(r"\s+(?:et|ou|puis|à partir|a partir|jusqu|depuis|entre|sont|est|ne|n['’]|reprise|pendant|en raison)\b", m.group(1))[0]
+        if n := normaliser(nom):
+            sortie.append(n)
+    return sortie
+
+
+def meme_direction(cite: str, direction: str) -> bool:
+    d = normaliser(re.sub(r"\s*\([^)]*\)\s*$", "", direction or ""))
+    if not d or not cite:
+        return True
+    return cite in d or d in cite or cite.split()[:2] == d.split()[:2]
+
+
 def pertinente(p: dict[str, Any], etape: dict[str, Any], quand: datetime | None = None) -> bool:
     """Une perturbation de la ligne concerne-t-elle cette étape (portion empruntée, heure de passage) ?
 
@@ -805,6 +831,11 @@ def pertinente(p: dict[str, Any], etape: dict[str, Any], quand: datetime | None 
         return False
     if p.get("routes") and etape.get("route_id") and etape["route_id"] not in p["routes"]:
         return False  # l'autre sens de la ligne
+    if etape.get("direction"):
+        # Message limité à un sens (« … en direction de X ») : l'autre sens n'est pas concerné.
+        cites = directions_citees(f"{p.get('titre') or ''}. {p.get('message') or ''}")
+        if cites and not any(meme_direction(c, etape["direction"]) for c in cites):
+            return False
     if p.get("portee", "ligne") == "ligne":
         return True
     bouts, parcourus = set(etape.get("bouts") or []), set(etape.get("arrets") or [])

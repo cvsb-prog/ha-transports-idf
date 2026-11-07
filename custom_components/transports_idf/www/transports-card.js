@@ -5,7 +5,7 @@
  * à l'intérieur, propositions et alertes sont repliées ; les gares se replient d'un clic.
  * Passages : vert = atteignable (départ ≥ marche + marge), orange = en se pressant, gris = trop tard.
  */
-const VERSION = "0.9.2";
+const VERSION = "0.9.3";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },
@@ -43,8 +43,8 @@ const PICTOS = {
   administrative_region: `<svg viewBox="0 0 24 24" aria-label="ville"><path d="M3 21V10l5-3v3l5-3v3l3-2v13zm15 0V7h3v14zM6 13h2v2H6zm0 4h2v2H6zm4-4h2v2h-2zm0 4h2v2h-2zm4-1h2v2h-2z"/></svg>`,
   stop_area: `<svg viewBox="0 0 24 24" aria-label="arrêt"><path d="M6 2h12v11h-5v9h-2v-9H6z"/></svg>`,
 };
-const TUILES = (sombre) => `https://{s}.basemaps.cartocdn.com/${sombre ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png`;
-const ATTRIBUTION = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>';
+const ATTR_OSM = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
+const ATTR_CARTO = `${ATTR_OSM} © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>`;
 // Ondes « temps réel » (comme dans les applis de transport).
 const ONDES = `<svg class="ondes" viewBox="0 0 14 14" aria-label="temps réel"><circle cx="3" cy="11" r="1.7" /><path d="M3 6.5a4.5 4.5 0 0 1 4.5 4.5" /><path d="M3 2a9 9 0 0 1 9 9" /></svg>`;
 
@@ -106,39 +106,41 @@ class TransportsIdfCard extends HTMLElement {
     return {};
   }
 
+  // Éditeur visuel : une section par partie de la carte, chaque réglage expliqué.
+  // Les valeurs absentes de la configuration s'affichent avec leur valeur par défaut (celle utilisée par la carte).
   static getConfigForm() {
     const choix = (options) => ({ select: { mode: "dropdown", options } });
+    // Interrupteurs « Masquer … » : éteints par défaut, comme les champs absents de la configuration.
+    const oui = (name) => ({ name, selector: { boolean: {} } });
     return {
       schema: [
         { name: "titre", selector: { text: {} } },
         {
-          type: "grid",
-          name: "",
+          type: "expandable", name: "", title: "Parties affichées", expanded: true, icon: "mdi:view-list",
           schema: [
-            { name: "afficher_recherche", selector: { boolean: {} } },
-            { name: "afficher_info_trafic", selector: { boolean: {} } },
-            { name: "afficher_gares", selector: { boolean: {} } },
-            { name: "afficher_trajets", selector: choix([
-              { value: "miens", label: "Mes trajets" }, { value: "tous", label: "Tous les trajets" }, { value: "aucun", label: "Aucun" }]) },
-          ],
-        },
-        { name: "entities", selector: { entity: { multiple: true, filter: { integration: "transports_idf", domain: "sensor" } } } },
-        {
-          type: "grid",
-          name: "",
-          schema: [
-            { name: "filtre_arrets", selector: choix([{ value: "tous", label: "Tous les arrêts" }, { value: "mes_trajets", label: "Arrêts de mes trajets" }]) },
-            { name: "regroupement", selector: choix([{ value: "ligne", label: "Par ligne et direction" }, { value: "chronologique", label: "Chronologique" }]) },
-            { name: "nb_passages", selector: { number: { min: 0, max: 30, mode: "box" } } },
-            { name: "afficher_trop_tard", selector: { boolean: {} } },
-            { name: "afficher_marche", selector: { boolean: {} } },
-            { name: "afficher_plan", selector: { boolean: {} } },
+            oui("masquer_recherche"),
+            { name: "afficher_trajets", default: DEFAUTS.afficher_trajets, selector: choix([
+              { value: "miens", label: "Les trajets de la personne connectée" }, { value: "tous", label: "Les trajets de tout le monde" }, { value: "aucun", label: "Aucun trajet" }]) },
+            oui("masquer_gares"),
+            oui("masquer_info_trafic"),
           ],
         },
         {
-          type: "expandable",
-          name: "",
-          title: "Couleurs",
+          type: "expandable", name: "", title: "Gares et arrêts", icon: "mdi:bus-stop",
+          schema: [
+            { name: "filtre_arrets", default: DEFAUTS.filtre_arrets, selector: choix([
+              { value: "tous", label: "Tous les arrêts de l'intégration" }, { value: "mes_trajets", label: "Seulement les arrêts de mes trajets" }]) },
+            { name: "entities", selector: { entity: { multiple: true, filter: { integration: "transports_idf", domain: "sensor" } } } },
+            { name: "regroupement", default: DEFAUTS.regroupement, selector: choix([
+              { value: "ligne", label: "Par ligne et direction" }, { value: "chronologique", label: "Dans l'ordre des départs" }]) },
+            { name: "nb_passages", default: DEFAUTS.nb_passages, selector: { number: { min: 0, max: 30, mode: "box" } } },
+            oui("masquer_trop_tard"),
+            oui("masquer_marche"),
+            oui("masquer_plan"),
+          ],
+        },
+        {
+          type: "expandable", name: "", title: "Couleurs des départs", icon: "mdi:palette",
           schema: [
             { name: "couleur_atteignable", selector: { text: {} } },
             { name: "couleur_presse", selector: { text: {} } },
@@ -148,27 +150,42 @@ class TransportsIdfCard extends HTMLElement {
       ],
       computeLabel: (s) =>
         ({
-          titre: "Titre",
-          afficher_recherche: "Recherche d'itinéraire",
-          afficher_info_trafic: "Info trafic",
-          afficher_gares: "Gares et arrêts",
-          afficher_trajets: "Trajets préférés",
-          entities: "Arrêts (vide = selon le filtre)",
-          filtre_arrets: "Arrêts affichés",
-          regroupement: "Présentation des passages",
-          nb_passages: "Passages par arrêt (0 = réglage de l'intégration)",
-          afficher_trop_tard: "Montrer les passages trop tard",
-          afficher_marche: "Montrer le temps de marche",
-          afficher_plan: "Bouton plan sur les arrêts",
-          couleur_atteignable: "Couleur « atteignable » (CSS)",
-          couleur_presse: "Couleur « en se pressant » (CSS)",
-          couleur_trop_tard: "Couleur « trop tard » (CSS)",
+          titre: "Titre de la carte",
+          masquer_recherche: "Masquer la recherche d'itinéraire",
+          afficher_trajets: "Trajets préférés (par défaut : ceux de la personne connectée)",
+          masquer_gares: "Masquer les gares et arrêts",
+          masquer_info_trafic: "Masquer l'info trafic",
+          filtre_arrets: "Arrêts à afficher (par défaut : tous)",
+          entities: "Ou choisir les arrêts un par un",
+          regroupement: "Présentation des départs (par défaut : par ligne)",
+          nb_passages: "Nombre de départs par arrêt",
+          masquer_trop_tard: "Masquer les départs trop proches pour y arriver à temps",
+          masquer_marche: "Masquer le temps de marche jusqu'à l'arrêt",
+          masquer_plan: "Masquer le bouton 🗺️ (l'arrêt sur une carte)",
+          couleur_atteignable: "Départ atteignable",
+          couleur_presse: "Départ atteignable en se pressant",
+          couleur_trop_tard: "Départ trop proche",
+        })[s.name],
+      computeHelper: (s) =>
+        ({
+          titre: "Facultatif.",
+          afficher_trajets: "Chaque personne voit ses trajets sur son compte.",
+          entities: "Facultatif. Si tu en choisis, seuls ces arrêts sont affichés (le réglage du dessus est alors ignoré).",
+          nb_passages: "0 : le nombre réglé dans l'intégration.",
+          couleur_atteignable: "Couleur CSS, ex. #2e7d32 ou green. Vide : vert par défaut.",
+          couleur_presse: "Vide : orange par défaut.",
+          couleur_trop_tard: "Vide : gris par défaut.",
         })[s.name],
     };
   }
 
   setConfig(config) {
-    this._config = { ...DEFAUTS, ...config };
+    // « masquer_x » (éditeur visuel) l'emporte ; « afficher_x » reste compris (anciennes configurations).
+    const c = { ...config };
+    for (const x of ["recherche", "gares", "info_trafic", "trop_tard", "marche", "plan"]) {
+      if (c[`masquer_${x}`] !== undefined) c[`afficher_${x}`] = !c[`masquer_${x}`];
+    }
+    this._config = { ...DEFAUTS, ...c };
     this._squelette = false;
     this._rendu();
   }
@@ -524,6 +541,31 @@ class TransportsIdfCard extends HTMLElement {
     return !!this._hass?.themes?.darkMode;
   }
 
+  // Fond de carte : CARTO (clair / sombre) si une clé est donnée dans les réglages de l'intégration,
+  // sinon OpenStreetMap, assombri par un filtre avec le thème sombre.
+  _fond() {
+    const info = Object.values(this._hass?.states || {}).find((e) => e.attributes?.type_transports_idf === "info_trafic");
+    const cle = info?.attributes?.cle_carto || "";
+    const sombre = this._sombre();
+    if (cle) {
+      return {
+        url: `https://{s}.basemaps.cartocdn.com/${sombre ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(cle)}`,
+        options: { subdomains: "abcd", maxZoom: 20, attribution: ATTR_CARTO },
+        filtre: false,
+        signature: `carto|${sombre}|${cle}`,
+      };
+    }
+    return { url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", options: { maxZoom: 19, attribution: ATTR_OSM }, filtre: sombre, signature: `osm|${sombre}` };
+  }
+
+  _poserFond(L, c) {
+    const f = this._fond();
+    if (c.tuiles) c.tuiles.remove();
+    c.tuiles = L.tileLayer(f.url, f.options).addTo(c.carte);
+    c.signature = f.signature;
+    c.el.classList.toggle("sombre", f.filtre);
+  }
+
   _monterCartes() {
     const places = [...this.shadowRoot.querySelectorAll("[data-carte]")];
     const vues = new Set();
@@ -542,10 +584,7 @@ class TransportsIdfCard extends HTMLElement {
         place.appendChild(c.el);
         c.carte?.invalidateSize();
       }
-      if (c.carte && c.sombre !== this._sombre()) {
-        c.sombre = this._sombre();
-        c.tuiles.setUrl(TUILES(c.sombre));
-      }
+      if (c.carte && c.L && c.signature !== this._fond().signature) this._poserFond(c.L, c);
     }
     for (const [cle, c] of this._cartes) {
       if (!vues.has(cle)) {
@@ -572,10 +611,10 @@ class TransportsIdfCard extends HTMLElement {
     if (this._cartes.get(cle) !== c) return; // carte refermée entre-temps
     const d = this._donneesCartes.get(cle) || {};
     const couleur = getComputedStyle(this).getPropertyValue("--primary-color").trim() || "#03a9f4";
-    c.sombre = this._sombre();
+    c.L = L;
     c.carte = L.map(c.el, { zoomControl: true, scrollWheelZoom: false, attributionControl: true });
     c.carte.attributionControl.setPrefix(false);
-    c.tuiles = L.tileLayer(TUILES(c.sombre), { subdomains: "abcd", maxZoom: 20, attribution: ATTRIBUTION }).addTo(c.carte);
+    this._poserFond(L, c);
     const points = d.trace?.length > 1 ? d.trace : [d.a, d.b].filter(Boolean);
     if (d.trace?.length > 1) L.polyline(points, { color: couleur, weight: 5, opacity: 0.9 }).addTo(c.carte);
     else if (d.ligne !== false && points.length > 1) L.polyline(points, { color: couleur, weight: 3, opacity: 0.7, dashArray: "6 6" }).addTo(c.carte);
@@ -1102,6 +1141,9 @@ class TransportsIdfCard extends HTMLElement {
       .carte-l { width: 100%; }
       .carte-int { position: relative; z-index: 0; height: 190px; border-radius: 8px; overflow: hidden; background: var(--ti-fond); font-size: .8em; color: var(--secondary-text-color); }
       .carte-marche .carte-int { height: 180px; }
+      .etapes li.carte-marche { grid-template-columns: 4.2em minmax(0, 1fr); }
+      .carte-marche .plan { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+      .carte-int.sombre .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.92) contrast(.88) saturate(.55); }
       .plan .carte-int { height: 210px; }
       .carte-int .leaflet-control-attribution { font-size: 9px; line-height: 1.3; background: rgba(255,255,255,.6); padding: 0 4px; }
       .carte-int .leaflet-control-attribution a { color: inherit; }

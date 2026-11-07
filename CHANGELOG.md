@@ -3,6 +3,25 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.9.3] - 2026-11-07
+
+*Livraison non fonctionnelle (tuiles OpenStreetMap refusées (403)) : version restée sur `dev`, non publiée sur `master`.*
+
+### Ajouté
+
+- Clé CARTO facultative dans les réglages ; fond OpenStreetMap par défaut, assombri en thème sombre.
+- Itinéraires en temps réel (data_freshness=realtime).
+
+### Modifié
+
+- Éditeur de la carte refait (3 sections, interrupteurs « Masquer … »).
+- Carte à pied sur toute la largeur.
+
+### Corrigé
+
+- Messages d'autres lignes desservant les mêmes arrêts écartés.
+- Messages « en direction de X » gardés seulement pour une étape vers X.
+
 ## [0.9.2] - 2026-11-06
 
 *Livraison non fonctionnelle (cartes toujours sans fond) : version restée sur `dev`, non publiée sur `master`.*

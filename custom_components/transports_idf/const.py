@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "transports_idf"
 NOM = "Transports IDF"
-VERSION = "0.9.2"
+VERSION = "0.9.3"
 
 BASE_URL = "https://prim.iledefrance-mobilites.fr/marketplace"
 NAVITIA = f"{BASE_URL}/v2/navitia"
@@ -21,6 +21,7 @@ OPT_DEBUT_NUIT = "debut_nuit"
 OPT_FIN_NUIT = "fin_nuit"
 OPT_NB_PASSAGES = "nb_passages"
 OPT_IGNORER_INFO = "ignorer_information"
+OPT_CLE_CARTO = "cle_carto"  # clé gratuite CARTO (fond de carte plus sobre) ; vide : OpenStreetMap
 OPT_LIGNES_INTERET = "lignes_interet"  # [{id, code, nom, mode, couleur, couleur_texte}]
 
 DEFAUTS = {
