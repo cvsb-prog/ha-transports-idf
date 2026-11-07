@@ -3,6 +3,12 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.9.5] - 2026-11-07
+
+### Modifié
+
+- Tuiles CARTO à l'adresse documentée (rastertiles), repli automatique sur l'ancienne adresse.
+
 ## [0.9.4] - 2026-11-07
 
 ### Corrigé
