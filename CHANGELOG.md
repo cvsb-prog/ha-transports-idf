@@ -3,6 +3,14 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.9.4] - 2026-11-07
+
+### Corrigé
+
+- Tuiles OpenStreetMap refusées (403) : l'adresse de Home Assistant est envoyée (referrerPolicy).
+- Éditeur : le capteur Info trafic n'est plus proposé parmi les arrêts.
+- Info trafic : messages d'une ligne repliés à l'ouverture.
+
 ## [0.9.3] - 2026-11-07
 
 *Livraison non fonctionnelle (tuiles OpenStreetMap refusées (403)) : version restée sur `dev`, non publiée sur `master`.*
