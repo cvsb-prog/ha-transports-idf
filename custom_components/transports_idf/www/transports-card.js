@@ -5,7 +5,7 @@
  * à l'intérieur, propositions et alertes sont repliées ; les gares se replient d'un clic.
  * Passages : vert = atteignable (départ ≥ marche + marge), orange = en se pressant, gris = trop tard.
  */
-const VERSION = "0.9.3";
+const VERSION = "0.9.4";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },
@@ -130,7 +130,7 @@ class TransportsIdfCard extends HTMLElement {
           schema: [
             { name: "filtre_arrets", default: DEFAUTS.filtre_arrets, selector: choix([
               { value: "tous", label: "Tous les arrêts de l'intégration" }, { value: "mes_trajets", label: "Seulement les arrêts de mes trajets" }]) },
-            { name: "entities", selector: { entity: { multiple: true, filter: { integration: "transports_idf", domain: "sensor" } } } },
+            { name: "entities", selector: { entity: { multiple: true, filter: { integration: "transports_idf", domain: "sensor", device_class: "timestamp" } } } },
             { name: "regroupement", default: DEFAUTS.regroupement, selector: choix([
               { value: "ligne", label: "Par ligne et direction" }, { value: "chronologique", label: "Dans l'ordre des départs" }]) },
             { name: "nb_passages", default: DEFAUTS.nb_passages, selector: { number: { min: 0, max: 30, mode: "box" } } },
@@ -550,12 +550,19 @@ class TransportsIdfCard extends HTMLElement {
     if (cle) {
       return {
         url: `https://{s}.basemaps.cartocdn.com/${sombre ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(cle)}`,
-        options: { subdomains: "abcd", maxZoom: 20, attribution: ATTR_CARTO },
+        options: { subdomains: "abcd", maxZoom: 20, attribution: ATTR_CARTO, referrerPolicy: "strict-origin-when-cross-origin" },
         filtre: false,
         signature: `carto|${sombre}|${cle}`,
       };
     }
-    return { url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", options: { maxZoom: 19, attribution: ATTR_OSM }, filtre: sombre, signature: `osm|${sombre}` };
+    // Home Assistant n'envoie pas de « Referer » : OpenStreetMap refuse alors les tuiles (403 « Access blocked »).
+    // On envoie au moins l'origine (adresse de ton Home Assistant), comme le demande sa politique d'usage.
+    return {
+      url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      options: { maxZoom: 19, attribution: ATTR_OSM, referrerPolicy: "strict-origin-when-cross-origin" },
+      filtre: sombre,
+      signature: `osm|${sombre}`,
+    };
   }
 
   _poserFond(L, c) {
@@ -779,7 +786,7 @@ class TransportsIdfCard extends HTMLElement {
     if (!ps.length) return `<div class="sous">Trafic normal.</div>`;
     const graves = ps.filter((p) => p.niveau !== "equipement");
     const equip = ps.filter((p) => p.niveau === "equipement");
-    let html = graves.map((p, n) => this._pli(`info|${ligne.id}|${n}`, n === 0,
+    let html = graves.map((p, n) => this._pli(`info|${ligne.id}|${n}`, false,
       `<span class="etiquette ${p.niveau || "info"}">${PASTILLE[p.niveau] || "i"}</span><span class="alerte-titre">${echapper(p.titre)}</span>`,
       `<div class="message">${echapper(p.message || p.titre)}</div>`, "alerte")).join("");
     if (equip.length) {
