@@ -5,7 +5,7 @@
  * à l'intérieur, propositions et alertes sont repliées ; les gares se replient d'un clic.
  * Passages : vert = atteignable (départ ≥ marche + marge), orange = en se pressant, gris = trop tard.
  */
-const VERSION = "0.9.4";
+const VERSION = "0.9.5";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },
@@ -549,7 +549,9 @@ class TransportsIdfCard extends HTMLElement {
     const sombre = this._sombre();
     if (cle) {
       return {
-        url: `https://{s}.basemaps.cartocdn.com/${sombre ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(cle)}`,
+        // Adresse documentée par CARTO (rastertiles/…) ; l'ancienne adresse sert de secours si elle échoue.
+        url: `https://{s}.basemaps.cartocdn.com/rastertiles/${sombre ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(cle)}`,
+        secours: `https://{s}.basemaps.cartocdn.com/${sombre ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(cle)}`,
         options: { subdomains: "abcd", maxZoom: 20, attribution: ATTR_CARTO, referrerPolicy: "strict-origin-when-cross-origin" },
         filtre: false,
         signature: `carto|${sombre}|${cle}`,
@@ -569,6 +571,12 @@ class TransportsIdfCard extends HTMLElement {
     const f = this._fond();
     if (c.tuiles) c.tuiles.remove();
     c.tuiles = L.tileLayer(f.url, f.options).addTo(c.carte);
+    if (f.secours) {
+      let erreurs = 0;
+      c.tuiles.on("tileerror", () => {
+        if (++erreurs === 2 && c.tuiles?._url === f.url) c.tuiles.setUrl(f.secours);
+      });
+    }
     c.signature = f.signature;
     c.el.classList.toggle("sombre", f.filtre);
   }
