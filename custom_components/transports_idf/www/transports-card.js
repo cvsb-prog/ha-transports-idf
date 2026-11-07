@@ -5,7 +5,7 @@
  * à l'intérieur, propositions et alertes sont repliées ; les gares se replient d'un clic.
  * Passages : vert = atteignable (départ ≥ marche + marge), orange = en se pressant, gris = trop tard.
  */
-const VERSION = "0.8.1";
+const VERSION = "0.9.4";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },
@@ -33,13 +33,28 @@ const DEFAUTS = {
 const GROUPES = ["RER", "Train", "Métro", "Tram"];
 const ICONES = { marche: "🚶", velo: "🚲", voiture: "🚗", transports: "🚌" };
 const NIVEAUX = { interrompu: 3, perturbe: 2, travaux: 1 };
-const PASTILLE = { interrompu: "✕", perturbe: "!", travaux: "⚒" };
-const LIBELLE_NIVEAU = { interrompu: "trafic interrompu", perturbe: "trafic perturbé", travaux: "travaux" };
+const PASTILLE = { interrompu: "✕", perturbe: "!", travaux: "⚒", equipement: "♿" };
+const LIBELLE_NIVEAU = { interrompu: "trafic interrompu", perturbe: "trafic perturbé", travaux: "travaux", equipement: "ascenseur ou escalier en panne" };
+const GLYPHES = { RER: "RER", Train: "TRAIN", "Métro": "M", Tram: "TRAM", Bus: "BUS" };
+// Pictogrammes des lieux sans ligne (suggestions de recherche).
+const PICTOS = {
+  address: `<svg viewBox="0 0 24 24" aria-label="adresse"><path d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7zm0 9.6a2.6 2.6 0 1 1 0-5.2 2.6 2.6 0 0 1 0 5.2z"/></svg>`,
+  poi: `<svg viewBox="0 0 24 24" aria-label="lieu"><path d="M12 2.6l2.8 5.8 6.4.9-4.6 4.5 1.1 6.3L12 17.1l-5.7 3 1.1-6.3-4.6-4.5 6.4-.9z"/></svg>`,
+  administrative_region: `<svg viewBox="0 0 24 24" aria-label="ville"><path d="M3 21V10l5-3v3l5-3v3l3-2v13zm15 0V7h3v14zM6 13h2v2H6zm0 4h2v2H6zm4-4h2v2h-2zm0 4h2v2h-2zm4-1h2v2h-2z"/></svg>`,
+  stop_area: `<svg viewBox="0 0 24 24" aria-label="arrêt"><path d="M6 2h12v11h-5v9h-2v-9H6z"/></svg>`,
+};
+const ATTR_OSM = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
+const ATTR_CARTO = `${ATTR_OSM} © <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>`;
 // Ondes « temps réel » (comme dans les applis de transport).
 const ONDES = `<svg class="ondes" viewBox="0 0 14 14" aria-label="temps réel"><circle cx="3" cy="11" r="1.7" /><path d="M3 6.5a4.5 4.5 0 0 1 4.5 4.5" /><path d="M3 2a9 9 0 0 1 9 9" /></svg>`;
 
 const echapper = (t) =>
   String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+// « 20261106T080500 » (heure locale Navitia) → horodatage, ou null
+const dateNavitia = (x) => {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})?/.exec(String(x || ""));
+  return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)).getTime() : null;
+};
 const heureCourte = (h) => (h ? `${Number(h.slice(0, 2))} h ${h.slice(3, 5)}` : "");
 const norm = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]/g, "");
 
@@ -70,7 +85,9 @@ class TransportsIdfCard extends HTMLElement {
     this._demandes = new Map(); // trajet → dernière demande de calcul (ms)
     this._erreurs = new Map();
     this._ligneInfo = null; // ligne dont on lit le détail dans l'info trafic
-    this._rech = { texte: "", lieux: [], dest: null, depuis: null, depuisTexte: "", lieuxDepuis: [], mode: "maintenant", heure: "", resultats: null, erreur: "", calcul: false };
+    this._rech = { texte: "", lieux: [], dest: null, depuis: null, depuisTexte: "", lieuxDepuis: [], mode: "maintenant", heure: "", date: "", resultats: null, erreur: "", calcul: false };
+    this._cartes = new Map(); // clé → { el, carte, tuiles, sombre } (cartes Leaflet gardées entre deux rendus)
+    this._donneesCartes = new Map(); // clé → { trace, a, b }
     try {
       this._replies = new Set(JSON.parse(localStorage.getItem("transports_idf_gares_repliees") || "[]"));
     } catch (e) {
@@ -89,39 +106,41 @@ class TransportsIdfCard extends HTMLElement {
     return {};
   }
 
+  // Éditeur visuel : une section par partie de la carte, chaque réglage expliqué.
+  // Les valeurs absentes de la configuration s'affichent avec leur valeur par défaut (celle utilisée par la carte).
   static getConfigForm() {
     const choix = (options) => ({ select: { mode: "dropdown", options } });
+    // Interrupteurs « Masquer … » : éteints par défaut, comme les champs absents de la configuration.
+    const oui = (name) => ({ name, selector: { boolean: {} } });
     return {
       schema: [
         { name: "titre", selector: { text: {} } },
         {
-          type: "grid",
-          name: "",
+          type: "expandable", name: "", title: "Parties affichées", expanded: true, icon: "mdi:view-list",
           schema: [
-            { name: "afficher_recherche", selector: { boolean: {} } },
-            { name: "afficher_info_trafic", selector: { boolean: {} } },
-            { name: "afficher_gares", selector: { boolean: {} } },
-            { name: "afficher_trajets", selector: choix([
-              { value: "miens", label: "Mes trajets" }, { value: "tous", label: "Tous les trajets" }, { value: "aucun", label: "Aucun" }]) },
-          ],
-        },
-        { name: "entities", selector: { entity: { multiple: true, filter: { integration: "transports_idf", domain: "sensor" } } } },
-        {
-          type: "grid",
-          name: "",
-          schema: [
-            { name: "filtre_arrets", selector: choix([{ value: "tous", label: "Tous les arrêts" }, { value: "mes_trajets", label: "Arrêts de mes trajets" }]) },
-            { name: "regroupement", selector: choix([{ value: "ligne", label: "Par ligne et direction" }, { value: "chronologique", label: "Chronologique" }]) },
-            { name: "nb_passages", selector: { number: { min: 0, max: 30, mode: "box" } } },
-            { name: "afficher_trop_tard", selector: { boolean: {} } },
-            { name: "afficher_marche", selector: { boolean: {} } },
-            { name: "afficher_plan", selector: { boolean: {} } },
+            oui("masquer_recherche"),
+            { name: "afficher_trajets", default: DEFAUTS.afficher_trajets, selector: choix([
+              { value: "miens", label: "Les trajets de la personne connectée" }, { value: "tous", label: "Les trajets de tout le monde" }, { value: "aucun", label: "Aucun trajet" }]) },
+            oui("masquer_gares"),
+            oui("masquer_info_trafic"),
           ],
         },
         {
-          type: "expandable",
-          name: "",
-          title: "Couleurs",
+          type: "expandable", name: "", title: "Gares et arrêts", icon: "mdi:bus-stop",
+          schema: [
+            { name: "filtre_arrets", default: DEFAUTS.filtre_arrets, selector: choix([
+              { value: "tous", label: "Tous les arrêts de l'intégration" }, { value: "mes_trajets", label: "Seulement les arrêts de mes trajets" }]) },
+            { name: "entities", selector: { entity: { multiple: true, filter: { integration: "transports_idf", domain: "sensor", device_class: "timestamp" } } } },
+            { name: "regroupement", default: DEFAUTS.regroupement, selector: choix([
+              { value: "ligne", label: "Par ligne et direction" }, { value: "chronologique", label: "Dans l'ordre des départs" }]) },
+            { name: "nb_passages", default: DEFAUTS.nb_passages, selector: { number: { min: 0, max: 30, mode: "box" } } },
+            oui("masquer_trop_tard"),
+            oui("masquer_marche"),
+            oui("masquer_plan"),
+          ],
+        },
+        {
+          type: "expandable", name: "", title: "Couleurs des départs", icon: "mdi:palette",
           schema: [
             { name: "couleur_atteignable", selector: { text: {} } },
             { name: "couleur_presse", selector: { text: {} } },
@@ -131,27 +150,42 @@ class TransportsIdfCard extends HTMLElement {
       ],
       computeLabel: (s) =>
         ({
-          titre: "Titre",
-          afficher_recherche: "Recherche d'itinéraire",
-          afficher_info_trafic: "Info trafic",
-          afficher_gares: "Gares et arrêts",
-          afficher_trajets: "Trajets préférés",
-          entities: "Arrêts (vide = selon le filtre)",
-          filtre_arrets: "Arrêts affichés",
-          regroupement: "Présentation des passages",
-          nb_passages: "Passages par arrêt (0 = réglage de l'intégration)",
-          afficher_trop_tard: "Montrer les passages trop tard",
-          afficher_marche: "Montrer le temps de marche",
-          afficher_plan: "Bouton plan sur les arrêts",
-          couleur_atteignable: "Couleur « atteignable » (CSS)",
-          couleur_presse: "Couleur « en se pressant » (CSS)",
-          couleur_trop_tard: "Couleur « trop tard » (CSS)",
+          titre: "Titre de la carte",
+          masquer_recherche: "Masquer la recherche d'itinéraire",
+          afficher_trajets: "Trajets préférés (par défaut : ceux de la personne connectée)",
+          masquer_gares: "Masquer les gares et arrêts",
+          masquer_info_trafic: "Masquer l'info trafic",
+          filtre_arrets: "Arrêts à afficher (par défaut : tous)",
+          entities: "Ou choisir les arrêts un par un",
+          regroupement: "Présentation des départs (par défaut : par ligne)",
+          nb_passages: "Nombre de départs par arrêt",
+          masquer_trop_tard: "Masquer les départs trop proches pour y arriver à temps",
+          masquer_marche: "Masquer le temps de marche jusqu'à l'arrêt",
+          masquer_plan: "Masquer le bouton 🗺️ (l'arrêt sur une carte)",
+          couleur_atteignable: "Départ atteignable",
+          couleur_presse: "Départ atteignable en se pressant",
+          couleur_trop_tard: "Départ trop proche",
+        })[s.name],
+      computeHelper: (s) =>
+        ({
+          titre: "Facultatif.",
+          afficher_trajets: "Chaque personne voit ses trajets sur son compte.",
+          entities: "Facultatif. Si tu en choisis, seuls ces arrêts sont affichés (le réglage du dessus est alors ignoré).",
+          nb_passages: "0 : le nombre réglé dans l'intégration.",
+          couleur_atteignable: "Couleur CSS, ex. #2e7d32 ou green. Vide : vert par défaut.",
+          couleur_presse: "Vide : orange par défaut.",
+          couleur_trop_tard: "Vide : gris par défaut.",
         })[s.name],
     };
   }
 
   setConfig(config) {
-    this._config = { ...DEFAUTS, ...config };
+    // « masquer_x » (éditeur visuel) l'emporte ; « afficher_x » reste compris (anciennes configurations).
+    const c = { ...config };
+    for (const x of ["recherche", "gares", "info_trafic", "trop_tard", "marche", "plan"]) {
+      if (c[`masquer_${x}`] !== undefined) c[`afficher_${x}`] = !c[`masquer_${x}`];
+    }
+    this._config = { ...DEFAUTS, ...c };
     this._squelette = false;
     this._rendu();
   }
@@ -279,7 +313,7 @@ class TransportsIdfCard extends HTMLElement {
     try {
       await this._hass.callService("transports_idf", "partir_maintenant", { trajet: id });
     } catch (err) {
-      this._erreurs.set(id, err?.message || "Calcul impossible");
+      this._erreurs.set(id, err?.message || (err?.code ? `Calcul impossible (${err.code})` : "Calcul impossible : PRIM n'a pas répondu"));
       setTimeout(() => { this._erreurs.delete(id); this._rendu(); }, 10000);
     } finally {
       this._enCours.delete(id);
@@ -345,6 +379,7 @@ class TransportsIdfCard extends HTMLElement {
     if (r.mode !== "maintenant" && r.heure) {
       donnees.heure = r.heure;
       donnees.type_heure = r.mode;
+      if (r.date) donnees.date = r.date;
     }
     r.calcul = true;
     r.erreur = "";
@@ -374,8 +409,9 @@ class TransportsIdfCard extends HTMLElement {
     const code = l.nom ?? l.ligne ?? l.code ?? "?";
     const fond = l.couleur || "#666";
     const texte = l.couleur_texte || "#fff";
-    const g = glyphe ? `<span class="glyphe g-${norm(groupe)}">${{ "Métro": "M", RER: "RER", Train: "TRAIN", Tram: "TRAM", Bus: "BUS" }[groupe] || ""}</span>` : "";
-    const niveau = alerte && alerte !== "normal" ? alerte : null;
+    const g = glyphe ? `<span class="glyphe g-${norm(groupe)}">${GLYPHES[groupe] || ""}</span>` : "";
+    const equipement = !alerte && (l.messages || []).some((m) => m.niveau === "equipement");
+    const niveau = alerte && alerte !== "normal" ? alerte : equipement ? "equipement" : null;
     const pastille = niveau ? `<span class="pastille ${niveau}" title="${LIBELLE_NIVEAU[niveau]}">${PASTILLE[niveau]}</span>` : "";
     const ident = l.id ?? l.ligne_id;
     const attr = cliquable === "info" ? "data-ligne-info" : "data-ligne-msg";
@@ -391,7 +427,7 @@ class TransportsIdfCard extends HTMLElement {
       .filter((e, n) => e.type === "transport" || e.type === "detour" || e.type === "pause" || (e.duree && (!compacte || n === 0)))
       .map((e) => (e.type === "detour" ? `<span class="pied">${ICONES[e.mode] || "🚶"}<sub>${echapper(e.duree)}</sub></span>`
         : e.type === "pause" ? `<span class="pied" title="${echapper(e.lieu || "")}">📍<sub>${echapper(e.duree)}</sub></span>`
-        : e.type === "marche" ? `<span class="pied">🚶<sub>${echapper(e.duree)}</sub></span>` : this._logo(e, { glyphe: true, alerte: e.alerte, cliquable: !!(e.alerte && e.alerte !== "normal") })))
+        : e.type === "marche" ? `<span class="pied">🚶<sub>${echapper(e.duree)}</sub></span>` : this._logo(e, { glyphe: true, alerte: e.alerte, cliquable: this._aMessages(e) })))
       .join(`<span class="sep">›</span>`);
   }
 
@@ -407,26 +443,37 @@ class TransportsIdfCard extends HTMLElement {
       <span class="chaine">${this._chaine(it.etapes)}</span>`;
   }
 
-  // Messages trafic d'une ligne (info trafic, sinon perturbations des trajets).
-  _messagesLigne(id) {
-    const info = this._etats("info_trafic")[0]?.attributes.lignes?.find((l) => l.id === id);
-    if (info?.perturbations?.length) return info.perturbations;
-    const vus = new Set();
-    return this._etats("trajet").flatMap((t) => t.attributes.perturbations || [])
-      .filter((p) => (p.lignes || []).includes(id) && !vus.has(p.id) && vus.add(p.id));
+  _aMessages(e) {
+    return !!((e.messages || []).length || (e.alerte && e.alerte !== "normal"));
+  }
+
+  // Messages trafic : graves d'abord (titre + texte), puis les ascenseurs / escaliers regroupés et repliés.
+  _blocMessages(msgs, cle) {
+    const graves = msgs.filter((m) => m.niveau !== "equipement");
+    const equip = msgs.filter((m) => m.niveau === "equipement");
+    let html = graves.map((m) => `<div class="msg-titre">${echapper(m.titre)}</div>${m.message ? `<div class="message">${echapper(m.message)}</div>` : ""}`).join("");
+    if (equip.length) {
+      const tete = `<span class="msg-equip">♿ ${equip.length === 1 ? "1 ascenseur ou escalier en panne" : `${equip.length} ascenseurs ou escaliers en panne`}</span>`;
+      html += this._pli(`equip|${cle}`, !graves.length && equip.length === 1, tete, equip.map((m) => `<div class="message">${echapper(m.message || m.titre)}</div>`).join(""), "equip");
+    }
+    return html;
   }
 
   // Bloc affiché sous un résumé ou une étape quand on a cliqué sur le logo d'une de ses lignes.
-  _messageSi(etapes, ctx) {
-    if (ctx !== this._msgCtx) return "";
+  // alt : contexte du résumé replié, pour qu'un clic dans le résumé d'un itinéraire déplié s'affiche sous l'étape.
+  _messageSi(etapes, ctx, alt = null) {
+    if (ctx !== this._msgCtx && (alt === null || alt !== this._msgCtx)) return "";
     const id = this._ligneMsg;
-    const e = id && (etapes || []).find((x) => x.type === "transport" && x.ligne_id === id && x.alerte && x.alerte !== "normal");
-    if (!e) return "";
-    const ps = this._messagesLigne(id);
-    const corps = ps.length
-      ? ps.map((p) => `<div class="msg-titre">${echapper(p.titre)}</div><div class="message">${echapper(p.message && p.message !== p.titre ? p.message : "")}</div>`).join("")
-      : `<div class="message">${LIBELLE_NIVEAU[e.alerte]}</div>`;
-    return `<div class="msg-ligne ${e.alerte}">${corps}</div>`;
+    const es = (etapes || []).filter((x) => x.type === "transport" && x.ligne_id === id && this._aMessages(x));
+    if (!es.length) return "";
+    const vus = new Set();
+    const msgs = es.flatMap((x) => x.messages || []).filter((m) => {
+      const cle = `${m.titre}|${m.message}`;
+      return !vus.has(cle) && vus.add(cle);
+    });
+    const niveau = es.map((x) => x.alerte).find((n) => n && n !== "normal") || (msgs.length ? msgs[0].niveau : null) || "perturbe";
+    const corps = msgs.length ? this._blocMessages(msgs, ctx) : `<div class="message">${LIBELLE_NIVEAU[niveau] || ""}</div>`;
+    return `<div class="msg-ligne ${niveau}">${corps}</div>`;
   }
 
   _etapes(it, base = "") {
@@ -440,10 +487,10 @@ class TransportsIdfCard extends HTMLElement {
         const suivants = e.suivants?.length ? `<span class="suivants" title="Départs suivants si tu le rates">+${e.suivants.join(", +")} min</span>` : "";
         const train = [e.voie ? `voie <b>${echapper(e.voie)}</b>` : "", e.mission ? `<b class="mission">${echapper(e.mission)}</b>` : ""].filter(Boolean).join(" · ");
         const ctx = `${base}|e${n}`;
-        return `<li data-ctx="${echapper(ctx)}"><span class="h">${echapper(e.depart || "")}${suivants}</span>${this._logo(e, { alerte: e.alerte, cliquable: !!(e.alerte && e.alerte !== "normal") })}
+        return `<li data-ctx="${echapper(ctx)}"><span class="h">${echapper(e.depart || "")}${suivants}</span>${this._logo(e, { alerte: e.alerte, cliquable: this._aMessages(e) })}
           <span class="trajet-ligne"><span>${echapper(e.de)} → ${echapper(e.vers)}</span>
           <span class="sous">${e.direction ? `dir. ${echapper(e.direction)} · ` : ""}arr. ${echapper(e.arrivee || "?")}</span>
-          ${train ? `<span class="sous train">${train}</span>` : ""}${this._rame(e.rame)}${this._messageSi([e], ctx)}</span></li>`;
+          ${train ? `<span class="sous train">${train}</span>` : ""}${this._rame(e.rame)}${this._messageSi([e], ctx, base || null)}</span></li>`;
       })
       .join("")}</ol>`;
   }
@@ -452,20 +499,137 @@ class TransportsIdfCard extends HTMLElement {
   // Un clic ouvre la carte du trajet à pied quand on en connaît les deux bouts.
   _marche(e, derniere) {
     const texte = `🚶 ${echapper(e.duree)} min${derniere && e.vers ? ` jusqu'à ${echapper(e.vers)}` : ""}`;
-    const a = e.de_coord, b = e.vers_coord;
+    const a = e.de_coord || e.trace?.[0], b = e.vers_coord || e.trace?.[e.trace.length - 1];
     if (!a || !b) return `<li class="marche"><span class="h"></span><span>${texte}</span></li>`;
     const cle = `carte|${a.join(",")}|${b.join(",")}`;
     const ouvert = this._ouvert(cle, false);
     let carte = "";
     if (ouvert) {
-      const m = 0.0015;
-      const s = Math.min(a[0], b[0]) - m, n = Math.max(a[0], b[0]) + m;
-      const o = Math.min(a[1], b[1]) - m * 1.5, est = Math.max(a[1], b[1]) + m * 1.5;
-      const url = `https://www.openstreetmap.org/export/embed.html?bbox=${o},${s},${est},${n}&layer=mapnik&marker=${b[0]},${b[1]}`;
+      this._donneesCartes.set(cle, { trace: e.trace, a, b });
       const pied = `https://www.openstreetmap.org/directions?engine=fossgis_osrm_foot&route=${a[0]}%2C${a[1]}%3B${b[0]}%2C${b[1]}`;
-      carte = `<li class="carte-marche"><span></span><span class="plan"><iframe loading="lazy" referrerpolicy="no-referrer" title="Trajet à pied" src="${echapper(url)}"></iframe><a href="${echapper(pied)}" target="_blank" rel="noopener">Itinéraire à pied détaillé ↗</a></span></li>`;
+      carte = `<li class="carte-marche"><span></span><span class="plan"><div class="carte-l" data-carte="${echapper(cle)}"></div><a href="${echapper(pied)}" target="_blank" rel="noopener">Itinéraire à pied détaillé ↗</a></span></li>`;
     }
     return `<li class="marche cliquable" data-bascule="${echapper(cle)}" data-defaut="0" role="button" tabindex="0" aria-expanded="${ouvert}"><span class="h"></span><span>${texte} <span class="mini-carte">🗺️</span></span></li>${carte}`;
+  }
+
+  // ---- Cartes (Leaflet + fond CARTO, servis avec l'intégration) -------------
+  static _leaflet() {
+    if (!TransportsIdfCard._promesseL) {
+      TransportsIdfCard._promesseL = Promise.all([
+        new Promise((ok, ko) => {
+          const ancien = window.L;
+          const s = document.createElement("script");
+          s.src = `/transports_idf/leaflet/leaflet.js?v=${VERSION}`;
+          s.onload = () => {
+            const L = window.L;
+            if (ancien) window.L = ancien; // ne pas remplacer le Leaflet d'une autre carte
+            ok(L);
+          };
+          s.onerror = () => {
+            TransportsIdfCard._promesseL = null;
+            ko(new Error("Leaflet indisponible"));
+          };
+          document.head.appendChild(s);
+        }),
+        fetch(`/transports_idf/leaflet/leaflet.css?v=${VERSION}`).then((r) => r.text()),
+      ]).then(([L, css]) => ({ L, css }));
+    }
+    return TransportsIdfCard._promesseL;
+  }
+
+  _sombre() {
+    return !!this._hass?.themes?.darkMode;
+  }
+
+  // Fond de carte : CARTO (clair / sombre) si une clé est donnée dans les réglages de l'intégration,
+  // sinon OpenStreetMap, assombri par un filtre avec le thème sombre.
+  _fond() {
+    const info = Object.values(this._hass?.states || {}).find((e) => e.attributes?.type_transports_idf === "info_trafic");
+    const cle = info?.attributes?.cle_carto || "";
+    const sombre = this._sombre();
+    if (cle) {
+      return {
+        url: `https://{s}.basemaps.cartocdn.com/${sombre ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(cle)}`,
+        options: { subdomains: "abcd", maxZoom: 20, attribution: ATTR_CARTO, referrerPolicy: "strict-origin-when-cross-origin" },
+        filtre: false,
+        signature: `carto|${sombre}|${cle}`,
+      };
+    }
+    // Home Assistant n'envoie pas de « Referer » : OpenStreetMap refuse alors les tuiles (403 « Access blocked »).
+    // On envoie au moins l'origine (adresse de ton Home Assistant), comme le demande sa politique d'usage.
+    return {
+      url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      options: { maxZoom: 19, attribution: ATTR_OSM, referrerPolicy: "strict-origin-when-cross-origin" },
+      filtre: sombre,
+      signature: `osm|${sombre}`,
+    };
+  }
+
+  _poserFond(L, c) {
+    const f = this._fond();
+    if (c.tuiles) c.tuiles.remove();
+    c.tuiles = L.tileLayer(f.url, f.options).addTo(c.carte);
+    c.signature = f.signature;
+    c.el.classList.toggle("sombre", f.filtre);
+  }
+
+  _monterCartes() {
+    const places = [...this.shadowRoot.querySelectorAll("[data-carte]")];
+    const vues = new Set();
+    for (const place of places) {
+      const cle = place.dataset.carte;
+      vues.add(cle);
+      let c = this._cartes.get(cle);
+      if (!c) {
+        const el = document.createElement("div");
+        el.className = "carte-int";
+        c = { el, carte: null };
+        this._cartes.set(cle, c);
+        this._creerCarte(cle, c);
+      }
+      if (c.el.parentNode !== place) {
+        place.appendChild(c.el);
+        c.carte?.invalidateSize();
+      }
+      if (c.carte && c.L && c.signature !== this._fond().signature) this._poserFond(c.L, c);
+    }
+    for (const [cle, c] of this._cartes) {
+      if (!vues.has(cle)) {
+        c.carte?.remove();
+        this._cartes.delete(cle);
+      }
+    }
+  }
+
+  async _creerCarte(cle, c) {
+    let L, css;
+    try {
+      ({ L, css } = await TransportsIdfCard._leaflet());
+    } catch (err) {
+      c.el.textContent = "Carte indisponible.";
+      return;
+    }
+    if (!this.shadowRoot.querySelector("style.leaflet")) {
+      const st = document.createElement("style");
+      st.className = "leaflet";
+      st.textContent = css;
+      this.shadowRoot.prepend(st);
+    }
+    if (this._cartes.get(cle) !== c) return; // carte refermée entre-temps
+    const d = this._donneesCartes.get(cle) || {};
+    const couleur = getComputedStyle(this).getPropertyValue("--primary-color").trim() || "#03a9f4";
+    c.L = L;
+    c.carte = L.map(c.el, { zoomControl: true, scrollWheelZoom: false, attributionControl: true });
+    c.carte.attributionControl.setPrefix(false);
+    this._poserFond(L, c);
+    const points = d.trace?.length > 1 ? d.trace : [d.a, d.b].filter(Boolean);
+    if (d.trace?.length > 1) L.polyline(points, { color: couleur, weight: 5, opacity: 0.9 }).addTo(c.carte);
+    else if (d.ligne !== false && points.length > 1) L.polyline(points, { color: couleur, weight: 3, opacity: 0.7, dashArray: "6 6" }).addTo(c.carte);
+    if (d.a) L.circleMarker(d.a, { radius: 6, color: "#fff", weight: 2, fillColor: "#757575", fillOpacity: 1 }).addTo(c.carte);
+    if (d.b) L.circleMarker(d.b, { radius: 8, color: "#fff", weight: 2, fillColor: couleur, fillOpacity: 1 }).addTo(c.carte);
+    if (points.length > 1) c.carte.fitBounds(L.latLngBounds(points), { padding: [24, 24], maxZoom: 18 });
+    else if (points.length) c.carte.setView(points[0], 17);
+    requestAnimationFrame(() => c.carte?.invalidateSize());
   }
 
   _rame(r) {
@@ -487,7 +651,7 @@ class TransportsIdfCard extends HTMLElement {
     const r = this._rech;
     const sugg = (champ, lieux) =>
       lieux.length
-        ? `<ul class="suggestions">${lieux.map((l, n) => `<li data-lieu="${n}" data-champ="${champ}" role="button" tabindex="0">${{ stop_area: "🚉", address: "📍", poi: "⭐", administrative_region: "🏙️" }[l.type] || "📍"} ${echapper(l.libelle || l.nom)}</li>`).join("")}</ul>`
+        ? `<ul class="suggestions">${lieux.map((l, n) => `<li data-lieu="${n}" data-champ="${champ}" role="button" tabindex="0"><span class="ico-lieu">${this._iconeLieu(l)}</span><span class="nom-lieu">${echapper(l.libelle || l.nom)}</span></li>`).join("")}</ul>`
         : "";
     let resultats = "";
     if (r.calcul) resultats = `<div class="sous">Calcul…</div>`;
@@ -498,6 +662,11 @@ class TransportsIdfCard extends HTMLElement {
         : `<div class="sous">Aucun itinéraire trouvé.</div>`;
     }
     return { suggDest: sugg("dest", r.lieux), suggDepuis: sugg("depuis", r.lieuxDepuis), resultats };
+  }
+
+  _iconeLieu(l) {
+    if (l.type === "stop_area" && l.modes?.length) return l.modes.map((g) => `<span class="glyphe g-${norm(g)}">${GLYPHES[g] || ""}</span>`).join("");
+    return `<span class="picto ${echapper(l.type || "")}">${PICTOS[l.type] || PICTOS.address}</span>`;
   }
 
   _jour(iso) {
@@ -515,10 +684,22 @@ class TransportsIdfCard extends HTMLElement {
     if (!a.en_veille || !r) return "";
     if (r.impossible) return `<span class="statut mauvais">arrivée à ${echapper(r.heure_cible)} impossible</span>`;
     if (r.retard) return `<span class="statut mauvais">arrivée ${echapper(r.arrivee_h)} (en retard)</span>`;
-    const minutes = Math.floor((new Date(r.depart_iso).getTime() - Date.now()) / 60000);
+    let depart = new Date(r.depart_iso).getTime();
+    const cible = r.cible_iso ? new Date(r.cible_iso).getTime() : null;
+    if (depart < Date.now() - 30000 && a.type_heure === "arrivee" && cible) {
+      // Le départ conseillé est passé : un autre départ arrive-t-il encore à l'heure ?
+      const encore = (a.direct || [])
+        .map((o) => ({ dep: dateNavitia(o.depart), arr: dateNavitia(o.arrivee) }))
+        .filter((o) => o.dep && o.arr && o.dep >= Date.now() - 30000 && o.arr <= cible)
+        .sort((x, y) => y.dep - x.dep)[0];
+      if (encore) depart = encore.dep;
+    }
+    const minutes = Math.floor((depart - Date.now()) / 60000);
     if (minutes >= 3) return `<span class="statut ok">pars dans ${minutes} min</span>`;
     if (minutes >= 0) return `<span class="statut attention">pars maintenant</span>`;
     const prochain = (a.direct || [])[0];
+    const tard = !cible || !prochain?.arrivee || (dateNavitia(prochain.arrivee) || 0) > cible;
+    if (!tard) return `<span class="statut attention">pars maintenant</span>`;
     return `<span class="statut mauvais">en retard${prochain?.arrivee_h ? ` · arrivée ${echapper(prochain.arrivee_h)}` : ""}</span>`;
   }
 
@@ -575,7 +756,7 @@ class TransportsIdfCard extends HTMLElement {
       const note = `<span class="ecart">habituel · ${this._jour(nominal.jour)}</span>`;
       corps.push(this._pli(cleN, false, this._resumeIt(nominal, note), this._etapes(nominal, cleN), "proposition nominal", this._ouvert(cleN, false) ? "" : this._messageSi(nominal.etapes, cleN)));
     }
-    return this._pli(`${id}|trajet`, enVeille, tete, corps.join(""), `trajet ${classe}`, ouvert ? "" : this._messageSi(etapes, `${id}|trajet`));
+    return this._pli(`${id}|trajet`, enVeille, tete, corps.join(""), `trajet ${classe}`, this._messageSi(etapes, `${id}|trajet`));
   }
 
   _htmlInfoTrafic() {
@@ -588,18 +769,32 @@ class TransportsIdfCard extends HTMLElement {
     const glyphes = { RER: "RER", Train: "TRAIN", "Métro": "M", Tram: "TRAM", "Mes lignes": "★" };
     const grille = rangees
       .filter(([, ls]) => ls.length)
-      .map(([g, ls]) => `<div class="rangee"><span class="glyphe g-${norm(g)}">${glyphes[g]}</span><div class="logos">${ls.map((l) => this._logo(l, { alerte: l.etat, cliquable: "info" })).join("")}</div></div>`)
+      .map(([g, ls]) => `<div class="rangee"><span class="glyphe g-${norm(g)}">${glyphes[g]}</span><div class="logos l-${norm(g)}">${ls.map((l) => this._logo(l, { alerte: l.etat, cliquable: "info" })).join("")}</div></div>`)
       .join("");
     const touchees = lignes.filter((l) => (l.base || l.interet || mesIds.has(l.id)) && l.etat !== "normal").length;
     const choisie = lignes.find((l) => l.id === this._ligneInfo);
     const detail = choisie
       ? `<div class="detail-ligne"><div class="detail-tete">${this._logo(choisie, { glyphe: true, alerte: choisie.etat })}<span class="${choisie.etat === "normal" ? "statut ok" : `etiquette ${choisie.etat}`}">${choisie.etat === "normal" ? "trafic normal" : LIBELLE_NIVEAU[choisie.etat]}</span></div>
-          ${(choisie.perturbations || []).length ? choisie.perturbations.map((p, n) => this._pli(`info|${choisie.id}|${n}`, n === 0,
-            `<span class="etiquette ${p.niveau}">${PASTILLE[p.niveau] || "!"}</span><span class="alerte-titre">${echapper(p.titre)}</span>`,
-            `<div class="message">${echapper(p.message || p.titre)}</div>`, "alerte")).join("") : `<div class="sous">Trafic normal.</div>`}</div>`
+          ${this._htmlPerturbations(choisie)}</div>`
       : "";
     const resume = touchees ? `<span class="statut attention">${touchees} ligne${touchees > 1 ? "s" : ""} touchée${touchees > 1 ? "s" : ""}</span>` : `<span class="statut ok">trafic normal</span>`;
     return this._pli("info", true, `<span class="section-titre">Info trafic</span>${resume}`, `<div class="grille">${grille}</div>${detail}`, "section info");
+  }
+
+  _htmlPerturbations(ligne) {
+    const ps = ligne.perturbations || [];
+    if (!ps.length) return `<div class="sous">Trafic normal.</div>`;
+    const graves = ps.filter((p) => p.niveau !== "equipement");
+    const equip = ps.filter((p) => p.niveau === "equipement");
+    let html = graves.map((p, n) => this._pli(`info|${ligne.id}|${n}`, false,
+      `<span class="etiquette ${p.niveau || "info"}">${PASTILLE[p.niveau] || "i"}</span><span class="alerte-titre">${echapper(p.titre)}</span>`,
+      `<div class="message">${echapper(p.message || p.titre)}</div>`, "alerte")).join("");
+    if (equip.length) {
+      html += this._pli(`info|${ligne.id}|equip`, false,
+        `<span class="etiquette equipement">♿</span><span class="alerte-titre">${equip.length === 1 ? "1 ascenseur ou escalier en panne" : `${equip.length} ascenseurs ou escaliers en panne`} (tes arrêts)</span>`,
+        equip.map((p) => `<div class="message">${echapper(p.message || p.titre)}</div>`).join(""), "alerte");
+    }
+    return html;
   }
 
   _htmlPassages(arret) {
@@ -648,13 +843,11 @@ class TransportsIdfCard extends HTMLElement {
     const lat = Number(a.lat), lon = Number(a.lon);
     if (!a.lat || !isFinite(lat) || !isFinite(lon)) return null;
     const dlat = Number(a.depart_lat), dlon = Number(a.depart_lon);
-    const pts = a.depart_lat && isFinite(dlat) && isFinite(dlon) ? [[lat, lon], [dlat, dlon]] : [[lat, lon]];
-    const m = 0.0025;
-    const s = Math.min(...pts.map((p) => p[0])) - m, n = Math.max(...pts.map((p) => p[0])) + m;
-    const o = Math.min(...pts.map((p) => p[1])) - m * 1.5, e = Math.max(...pts.map((p) => p[1])) + m * 1.5;
+    const depart = a.depart_lat && isFinite(dlat) && isFinite(dlon) ? [dlat, dlon] : null;
     return {
-      carte: `https://www.openstreetmap.org/export/embed.html?bbox=${o},${s},${e},${n}&layer=mapnik&marker=${lat},${lon}`,
-      pied: pts.length > 1
+      cle: `plan|${lat},${lon}`,
+      donnees: { a: depart, b: [lat, lon], ligne: false },
+      pied: depart
         ? `https://www.openstreetmap.org/directions?engine=fossgis_osrm_foot&route=${dlat}%2C${dlon}%3B${lat}%2C${lon}`
         : `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=17/${lat}/${lon}`,
     };
@@ -671,7 +864,7 @@ class TransportsIdfCard extends HTMLElement {
           <div class="options-recherche" hidden>
             <input class="depuis" type="search" placeholder="Depuis : la maison" autocomplete="off" aria-label="Départ">
             <select class="mode" aria-label="Quand"><option value="maintenant">Partir maintenant</option><option value="depart">Partir à</option><option value="arrivee">Arriver à</option></select>
-            <input class="heure" type="time" hidden aria-label="Heure">
+            <input class="quand" type="datetime-local" step="60" hidden aria-label="Jour et heure">
           </div>
           <div class="sugg-depuis"></div>
           <div class="resultats"></div>
@@ -684,7 +877,7 @@ class TransportsIdfCard extends HTMLElement {
     const q = (sel) => this.shadowRoot.querySelector(sel);
     this._el = {
       style: q("style"), titre: q(".titre"), recherche: q(".recherche"), dest: q(".dest"), depuis: q(".depuis"), mode: q(".mode"),
-      heure: q(".heure"), effacer: q(".effacer"), options: q(".options-recherche"), suggDest: q(".sugg-dest"),
+      quand: q(".quand"), effacer: q(".effacer"), options: q(".options-recherche"), suggDest: q(".sugg-dest"),
       suggDepuis: q(".sugg-depuis"), resultats: q(".resultats"), trajets: q(".trajets"), info: q(".info"), arrets: q(".arrets"), aucun: q(".aucun"),
     };
     this._el.dest.addEventListener("input", (e) => this._saisie("dest", e.target.value));
@@ -694,15 +887,21 @@ class TransportsIdfCard extends HTMLElement {
       if (this._rech.mode !== "maintenant" && !this._rech.heure) {
         const d = new Date(Date.now() + (this._rech.mode === "arrivee" ? 45 : 0) * 60000);
         this._rech.heure = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-        this._el.heure.value = this._rech.heure;
+        this._rech.date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        this._el.quand.value = `${this._rech.date}T${this._rech.heure}`;
       }
       this._calculer();
     });
-    this._el.heure.addEventListener("change", (e) => {
-      this._rech.heure = e.target.value;
+    this._el.quand.addEventListener("change", (e) => {
+      const [jour, heure] = String(e.target.value || "").split("T");
+      if (!jour || !heure) return;
+      this._rech.date = jour;
+      this._rech.heure = heure.slice(0, 5);
       this._calculer();
     });
     this._blocs.clear();
+    for (const c of this._cartes.values()) c.carte?.remove();
+    this._cartes.clear();
     this._squelette = true;
   }
 
@@ -739,7 +938,7 @@ class TransportsIdfCard extends HTMLElement {
       const h = this._htmlRecherche();
       this._el.options.hidden = !(r.dest || r.texte || r.resultats);
       this._el.effacer.hidden = !(r.texte || r.resultats);
-      this._el.heure.hidden = r.mode === "maintenant";
+      this._el.quand.hidden = r.mode === "maintenant";
       this._maj(this._el.suggDest, h.suggDest);
       this._maj(this._el.suggDepuis, h.suggDepuis);
       this._maj(this._el.resultats, h.resultats);
@@ -776,16 +975,18 @@ class TransportsIdfCard extends HTMLElement {
       b.entete.setAttribute("aria-expanded", String(!replie));
       this._maj(b.entete, `<span class="chevron">${replie ? "▸" : "▾"}</span><span class="arret">${echapper(a.arret || a.friendly_name)}</span>${indispo}${marche}${boutonPlan}`);
       if (planOuvert) {
-        if (b.plan._url !== plan.carte) {
-          b.plan._url = plan.carte;
-          b.plan.innerHTML = `<iframe loading="lazy" referrerpolicy="no-referrer" title="Plan" src="${echapper(plan.carte)}"></iframe><a href="${echapper(plan.pied)}" target="_blank" rel="noopener">Itinéraire à pied ↗</a>`;
-        }
+        this._donneesCartes.set(plan.cle, plan.donnees);
+        this._maj(b.plan, `<div class="carte-l" data-carte="${echapper(plan.cle)}"></div><a href="${echapper(plan.pied)}" target="_blank" rel="noopener">Itinéraire à pied ↗</a>`);
         b.plan.hidden = false;
-      } else b.plan.hidden = true;
+      } else {
+        this._maj(b.plan, "");
+        b.plan.hidden = true;
+      }
       b.corps.hidden = replie;
       if (!replie) this._maj(b.corps, this._htmlPassages(arret));
     });
     this._maj(this._el.aucun, cfg.afficher_gares && !arrets.length ? `<div class="vide">Aucun arrêt : ajoute-en un depuis l'intégration Transports IDF.</div>` : "");
+    this._monterCartes();
   }
 
   _style() {
@@ -821,15 +1022,21 @@ class TransportsIdfCard extends HTMLElement {
       .champ { display: flex; align-items: center; gap: 8px; background: var(--ti-fond); border-radius: 22px; padding: 6px 12px; }
       .champ input { flex: 1; min-width: 0; border: 0; background: transparent; font: inherit; color: var(--primary-text-color); outline: none; }
       .effacer { border: 0; background: transparent; color: var(--secondary-text-color); cursor: pointer; font-size: 1em; }
-      .options-recherche { display: flex; flex-wrap: wrap; gap: 6px; }
+      .options-recherche { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 6px; }
       .options-recherche input, .options-recherche select {
         font: inherit; font-size: .9em; color: var(--primary-text-color); background: var(--ti-fond);
         border: 1px solid var(--ti-trait); border-radius: 16px; padding: 4px 10px; min-width: 0;
       }
-      .options-recherche .depuis { flex: 1 1 160px; }
+      .options-recherche .depuis { grid-column: 1 / -1; }
+      .options-recherche:has(.quand[hidden]) { grid-template-columns: minmax(0, 1fr); }
+      .options-recherche .quand { width: 100%; box-sizing: border-box; }
       .suggestions { list-style: none; margin: 0; padding: 4px; border: 1px solid var(--ti-trait); border-radius: 10px; display: flex; flex-direction: column; }
-      .suggestions li { padding: 6px 8px; border-radius: 6px; cursor: pointer; overflow-wrap: anywhere; }
+      .suggestions li { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
       .suggestions li:hover { background: var(--ti-fond); }
+      .ico-lieu { flex: none; min-width: 2.2em; display: inline-flex; align-items: center; gap: 3px; color: var(--secondary-text-color); }
+      .ico-lieu .glyphe { margin-right: 0; }
+      .picto svg { width: 18px; height: 18px; fill: currentColor; display: block; }
+      .nom-lieu { min-width: 0; overflow-wrap: anywhere; }
       .resultats { display: flex; flex-direction: column; }
 
       /* Logos de lignes */
@@ -852,6 +1059,7 @@ class TransportsIdfCard extends HTMLElement {
       .pastille.interrompu { background: var(--ti-rouge); }
       .pastille.perturbe { background: var(--ti-orange); border-radius: 50%; }
       .pastille.travaux { background: #757575; }
+      .pastille.equipement { background: #5c6bc0; font-size: 8px; }
       .glyphe { font-size: .62em; font-weight: 800; letter-spacing: .02em; color: var(--primary-text-color); border: 1.5px solid currentColor; border-radius: 4px; padding: 1px 3px; margin-right: 3px; }
       .glyphe.g-metro { border-radius: 50%; width: 1.4em; height: 1.4em; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
       .glyphe.g-bus { border: 0; border-bottom: 1.5px solid currentColor; border-top: 1.5px solid currentColor; border-radius: 0; }
@@ -864,6 +1072,8 @@ class TransportsIdfCard extends HTMLElement {
       .etiquette.interrompu { background: var(--ti-rouge); }
       .etiquette.perturbe { background: var(--ti-orange); }
       .etiquette.travaux { background: #757575; }
+      .etiquette.equipement { background: #5c6bc0; }
+      .etiquette.info { background: var(--secondary-text-color); }
 
       /* Trajets préférés */
       .trajet { background: var(--ti-fond); border-radius: 10px; padding: 4px 12px; border-left: 4px solid transparent; }
@@ -923,6 +1133,11 @@ class TransportsIdfCard extends HTMLElement {
       .msg-ligne { margin: 2px 0 4px 1.2em; padding: 6px 8px; border-radius: 6px; font-size: .88em; border-left: 3px solid var(--ti-orange); background: color-mix(in srgb, var(--ti-orange) 8%, transparent); }
       .msg-ligne.interrompu { border-left-color: var(--ti-rouge); background: color-mix(in srgb, var(--ti-rouge) 8%, transparent); }
       .msg-ligne.travaux { border-left-color: #757575; background: var(--ti-fond); }
+      .msg-ligne.equipement { border-left-color: #5c6bc0; background: color-mix(in srgb, #5c6bc0 8%, transparent); }
+      .msg-ligne .equip { margin-top: 2px; }
+      .msg-ligne .equip .pli-tete { padding: 2px 0; }
+      .msg-ligne .msg-titre + .message { margin-bottom: 4px; }
+      .msg-equip { font-weight: 600; font-size: .95em; }
       .etapes .msg-ligne { margin-left: 0; }
       .msg-titre { font-weight: 600; }
       .marche.cliquable { cursor: pointer; }
@@ -930,7 +1145,16 @@ class TransportsIdfCard extends HTMLElement {
       .marche.cliquable:hover { color: var(--primary-text-color); }
       .mini-carte { font-size: .85em; opacity: .7; }
       .carte-marche { display: grid; grid-template-columns: 4.2em minmax(0, 1fr); }
-      .carte-marche .plan iframe { height: 180px; }
+      .carte-l { width: 100%; }
+      .carte-int { position: relative; z-index: 0; height: 190px; border-radius: 8px; overflow: hidden; background: var(--ti-fond); font-size: .8em; color: var(--secondary-text-color); }
+      .carte-marche .carte-int { height: 180px; }
+      .etapes li.carte-marche { grid-template-columns: 4.2em minmax(0, 1fr); }
+      .carte-marche .plan { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+      .carte-int.sombre .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.92) contrast(.88) saturate(.55); }
+      .plan .carte-int { height: 210px; }
+      .carte-int .leaflet-control-attribution { font-size: 9px; line-height: 1.3; background: rgba(255,255,255,.6); padding: 0 4px; }
+      .carte-int .leaflet-control-attribution a { color: inherit; }
+      .carte-int .leaflet-bar a { width: 26px; height: 26px; line-height: 26px; }
       .separation { margin: 8px 0 4px; border-top: 2px solid var(--ti-trait); }
       .separation + .proposition { border-top: 0; }
       .proposition.prefere { border-top: 0; }
@@ -944,9 +1168,15 @@ class TransportsIdfCard extends HTMLElement {
       .section { background: var(--ti-fond); border-radius: 10px; padding: 4px 12px; }
       .section > .pli-tete .statut { margin-left: auto; }
       .grille { display: flex; flex-direction: column; gap: 8px; padding: 4px 0 6px; }
-      .rangee { display: grid; grid-template-columns: 3em 1fr; align-items: center; gap: 6px; }
-      .rangee .glyphe { justify-self: start; }
-      .logos { display: flex; flex-wrap: wrap; gap: 9px 9px; }
+      .rangee { display: grid; grid-template-columns: 3.2em minmax(0, 1fr); align-items: start; gap: 6px; }
+      .rangee > .glyphe { justify-self: start; align-self: start; margin-top: .55em; }
+      .rangee > .glyphe.g-metro { margin-top: .35em; }
+      .logos { display: grid; grid-template-columns: repeat(auto-fill, 2.35em); gap: 10px 3px; align-items: center; justify-items: center; }
+      .logos.l-tram { grid-template-columns: repeat(auto-fill, 3em); }
+      .logos.l-meslignes { grid-template-columns: repeat(auto-fill, minmax(3.2em, max-content)); justify-items: start; gap: 10px 10px; }
+      .logos .logo { font-size: .82em; }
+      .logos .logo.f-tram { min-width: 2.4em; padding: 0 3px; }
+      .logos .logo.f-bus { min-width: 2.5em; }
       .detail-tete { display: flex; align-items: center; gap: 8px; }
       .detail-ligne { border-top: 1px solid var(--ti-trait); padding-top: 6px; display: flex; flex-direction: column; gap: 2px; }
 

@@ -10,7 +10,8 @@ import html
 import logging
 import math
 import re
-from datetime import datetime, timedelta, timezone
+import unicodedata
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
@@ -23,6 +24,8 @@ _LOGGER = logging.getLogger(__name__)
 DELAI = aiohttp.ClientTimeout(total=20)
 VITESSE_MARCHE = 1.2  # m/s (≈ 4,3 km/h), pour l'estimation de secours
 DETOUR = 1.3  # rapport distance à pied / distance à vol d'oiseau
+# Perturbations gardées si elles s'appliquent d'ici là (trajet de demain matin) ; le tri par heure se fait à l'usage.
+HORIZON_PERTURBATIONS = timedelta(hours=36)
 
 
 class ErreurPrim(Exception):
@@ -65,7 +68,7 @@ class ClientPrim:
                     if rep.status >= 400:
                         raise ErreurPrim(f"HTTP {rep.status} sur {url}")
                     return await rep.json(content_type=None)
-            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            except (TimeoutError, aiohttp.ClientError) as err:
                 raise ErreurPrim(f"PRIM injoignable : {err}") from err
 
     # ---- Prochains passages (SIRI Lite) ---------------------------------
@@ -75,7 +78,8 @@ class ClientPrim:
 
     # ---- Calculateur (Navitia) ------------------------------------------
     async def lieux(self, texte: str, types: list[str]) -> list[dict[str, Any]]:
-        params = [("q", texte), ("count", "15")] + [("type[]", t) for t in types]
+        # depth=2 : les zones d'arrêt portent leurs modes (pictogrammes RER, métro, tram, bus…).
+        params = [("q", texte), ("count", "15"), ("depth", "2")] + [("type[]", t) for t in types]
         return analyser_lieux(await self._get(f"{NAVITIA}/places", params))
 
     async def lignes_zone(self, zone_id: str) -> list[dict[str, Any]]:
@@ -113,7 +117,8 @@ class ClientPrim:
         autorises: list[str] | None = None,
         represente: str = "departure",
     ) -> list[dict[str, Any]]:
-        params = [("from", depart), ("to", arrivee), ("min_nb_journeys", "3"), ("count", "5")]
+        # data_freshness=realtime : le calculateur tient compte des perturbations (arrêts non desservis, travaux).
+        params = [("from", depart), ("to", arrivee), ("min_nb_journeys", "3"), ("count", "5"), ("data_freshness", "realtime")]
         if quand is not None:
             params += [("datetime", quand.strftime("%Y%m%dT%H%M%S")), ("datetime_represents", represente)]
         params += [("forbidden_uris[]", i) for i in (interdits or [])]
@@ -122,7 +127,7 @@ class ClientPrim:
 
     async def perturbations_ligne(self, ligne_id: str) -> list[dict[str, Any]]:
         url = f"{NAVITIA}/line_reports/lines/{quote(ligne_id)}/line_reports"
-        return analyser_perturbations(await self._get(url, [("count", "100")]))
+        return analyser_perturbations(await self._get(url, [("count", "100")]), horizon=HORIZON_PERTURBATIONS)
 
     async def lignes_reseau(self) -> list[dict[str, Any]]:
         """Toutes les lignes hors bus (RER, Transilien, métro, tram…), avec code et couleurs."""
@@ -147,7 +152,7 @@ class ClientPrim:
             total, par_page = pagination.get("total_result"), pagination.get("items_per_page") or 100
             if not isinstance(total, int) or (page + 1) * par_page >= total:
                 break
-        return analyser_perturbations(fusion), lignes_touchees(fusion)
+        return analyser_perturbations(fusion, horizon=HORIZON_PERTURBATIONS), lignes_touchees(fusion)
 
     async def departs_route(self, point: str, route: str, depuis: datetime, nombre: int = 4) -> list[datetime]:
         """Prochains départs (temps réel si disponible) d'une route à un point d'arrêt."""
@@ -210,10 +215,10 @@ def _date_siri(x: Any) -> datetime | None:
     if not isinstance(x, str):
         return None
     try:
-        d = datetime.fromisoformat(x.replace("Z", "+00:00"))
+        d = datetime.fromisoformat(x)
     except ValueError:
         return None
-    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    return d if d.tzinfo else d.replace(tzinfo=UTC)
 
 
 def analyser_passages(donnees: Any) -> list[dict[str, Any]]:
@@ -281,9 +286,60 @@ def analyser_lieux(donnees: Any) -> list[dict[str, Any]]:
                 "lat": lat,
                 "lon": lon,
                 "commune": _commune(objet),
+                "modes": modes_zone(objet) if type_ == "stop_area" else [],
             }
         )
     return [s for s in sortie if s["id"]]
+
+
+ORDRE_GROUPES = ["RER", "Train", "Métro", "Tram", "Bus"]
+
+
+def normaliser(texte: Any) -> str:
+    """Minuscules sans accents ni ponctuation (comparaison de noms)."""
+    t = unicodedata.normalize("NFD", str(texte or "")).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", " ", t).strip()
+
+
+def groupe_mode(nom: Any, physique: Any = None) -> str | None:
+    """Groupe d'affichage d'un mode Navitia : RER, Train, Métro, Tram, Bus (None si inconnu)."""
+    m, p = normaliser(nom), normaliser(physique)
+    if "rer" in m or "rapidtransit" in p:
+        return "RER"
+    if "metro" in m or "metro" in p:
+        return "Métro"
+    if "tram" in m or "tram" in p:
+        return "Tram"
+    if "train" in m or "transilien" in m or "ter" == m or "train" in p:
+        return "Train"
+    if "bus" in m or "noctilien" in m or "bus" in p or "coach" in p:
+        return "Bus"
+    return None
+
+
+def modes_zone(objet: dict[str, Any]) -> list[str]:
+    """Modes desservant une zone d'arrêt (modes commerciaux / physiques, sinon ceux de ses lignes)."""
+    trouves: set[str] = set()
+    for m in objet.get("commercial_modes", []) or []:
+        trouves.add(groupe_mode(m.get("name"), m.get("id")) or "")
+    for m in objet.get("physical_modes", []) or []:
+        trouves.add(groupe_mode(None, m.get("id") or m.get("name")) or "")
+    for l in objet.get("lines", []) or []:
+        trouves.add(groupe_mode((l.get("commercial_mode") or {}).get("name")) or "")
+    return [g for g in ORDRE_GROUPES if g in trouves]
+
+
+ICONES_LIEU = {"address": "📍", "poi": "⭐", "administrative_region": "🏙️"}
+# Mêmes mentions que les pictogrammes de la carte (les listes des formulaires n'affichent que du texte).
+ICONES_GROUPE = {"RER": "[RER]", "Train": "[TRAIN]", "Métro": "[M]", "Tram": "[TRAM]", "Bus": "[BUS]"}
+
+
+def icone_lieu(lieu: dict[str, Any]) -> str:
+    """Mentions d'un lieu pour les listes des formulaires : modes d'un arrêt ([RER] [M] [BUS]…), adresse, lieu…"""
+    if lieu.get("type") == "stop_area":
+        icones = list(dict.fromkeys(ICONES_GROUPE[g] for g in lieu.get("modes") or [] if g in ICONES_GROUPE))
+        return " ".join(icones) or "🚏"
+    return ICONES_LIEU.get(lieu.get("type") or "", "📍")
 
 
 def _couleur(c: Any) -> str | None:
@@ -356,6 +412,67 @@ def _coord_lieu(lieu: Any) -> list[float] | None:
         return [float(coord["lat"]), float(coord["lon"])]
     except (KeyError, TypeError, ValueError):
         return None
+
+
+def _nom_arret(nom: Any) -> str:
+    """Nom d'arrêt comparable : sans la commune entre parenthèses, normalisé."""
+    return normaliser(re.sub(r"\s*\([^)]*\)\s*$", "", str(nom or "")))
+
+
+def cles_arret(objet: Any) -> set[str]:
+    """Clés d'identification d'un arrêt (point d'arrêt, zone d'arrêt, nom) pour croiser itinéraires et perturbations."""
+    cles: set[str] = set()
+    if not isinstance(objet, dict):
+        return cles
+    interieur = objet.get(objet.get("embedded_type") or "")
+    for o in (objet, interieur if isinstance(interieur, dict) else None):
+        if not o:
+            continue
+        if o.get("id"):
+            cles.add(o["id"])
+        if o.get("name"):
+            cles.add("n:" + _nom_arret(o["name"]))
+        zone = o.get("stop_area")
+        if isinstance(zone, dict):
+            if zone.get("id"):
+                cles.add(zone["id"])
+            if zone.get("name"):
+                cles.add("n:" + _nom_arret(zone["name"]))
+    cles.discard("n:")
+    return cles
+
+
+def cles_perturbation(objet: Any) -> set[str]:
+    """Clés d'un arrêt cité par une perturbation.
+
+    Un point d'arrêt (quai, propre à un sens) ne correspond qu'à lui-même : un arrêt non desservi
+    « direction X » ne concerne pas l'autre sens. Une zone d'arrêt garde son identifiant et son nom.
+    """
+    if not isinstance(objet, dict):
+        return set()
+    type_ = objet.get("embedded_type")
+    interieur = objet.get(type_) if type_ else None
+    point = interieur if type_ == "stop_point" and isinstance(interieur, dict) else objet.get("stop_point") if isinstance(objet.get("stop_point"), dict) else None
+    if point is None and str(objet.get("id") or "").startswith("stop_point:"):
+        point = objet
+    if point is not None and point.get("id"):
+        return {point["id"]}
+    return cles_arret(objet)
+
+
+def _trace(section: dict[str, Any], maxi: int = 150) -> list[list[float]]:
+    """Tracé d'une section (GeoJSON [lon, lat]) → [[lat, lon], …], allégé."""
+    coords = ((section.get("geojson") or {}).get("coordinates")) or []
+    points = []
+    for c in coords:
+        try:
+            points.append([round(float(c[1]), 6), round(float(c[0]), 6)])
+        except (IndexError, TypeError, ValueError):
+            continue
+    if len(points) > maxi:
+        pas = math.ceil(len(points) / maxi)
+        points = points[::pas] + [points[-1]]
+    return points
 
 
 def _point_lieu(lieu: Any) -> str | None:
@@ -446,10 +563,16 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                     "depart": s.get("departure_date_time"),
                 }
                 sections.append(section)
+                bouts = cles_arret(s.get("from")) | cles_arret(s.get("to"))
+                arrets: set[str] = set(bouts)
+                for sdt in s.get("stop_date_times", []) or []:
+                    arrets |= cles_arret(sdt.get("stop_point"))
                 etapes.append(
                     {
                         "type": "transport",
                         **{k: section[k] for k in ("nom", "code", "mode", "couleur", "couleur_texte", "direction", "de", "vers", "ligne_id", "de_point", "vers_point", "route_id")},
+                        "bouts": sorted(bouts),
+                        "arrets": sorted(arrets),
                         "depart_brut": s.get("departure_date_time"),
                         "mission": _mission(info),
                         "depart": heure_navitia(s.get("departure_date_time")),
@@ -462,13 +585,18 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                 if not duree:
                     continue
                 rues = [p.get("name") for p in s.get("path", []) or [] if p.get("name")][:3]
+                trace = _trace(s)
                 if etapes and etapes[-1]["type"] == "marche":
                     etapes[-1]["duree"] += duree
                     etapes[-1]["vers"] = vers
+                    if trace:
+                        etapes[-1]["trace"] = (etapes[-1].get("trace") or []) + trace
                 else:
                     etapes.append({"type": "marche", "duree": duree, "vers": vers})
                     if rues:
                         etapes[-1]["rues"] = rues
+                    if trace:
+                        etapes[-1]["trace"] = trace
                     if de := _coord_lieu(s.get("from")):
                         etapes[-1]["de_coord"] = de
                 if coord := _coord_lieu(s.get("to")):
@@ -538,18 +666,71 @@ def _texte(x: Any) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
-def analyser_perturbations(donnees: Any, maintenant: datetime | None = None) -> list[dict[str, Any]]:
-    """Perturbations actives maintenant (heure locale naïve, comme Navitia)."""
+_EQUIPEMENT = re.compile(r"ascenseur|escalier m[ée]canique|escalator|trottoir roulant|monte[- ]charge", re.IGNORECASE)
+_PERIODE_TEXTE = re.compile(r"\bdu\s+\d{1,2}/\d{1,2}(?:/\d{2,4})?\s+au\s+(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?", re.IGNORECASE)
+
+
+def perimee_selon_texte(titre: str, aujourdhui: date) -> bool:
+    """« … du 06/04 au 07/04 » dans le titre alors que la date de fin est passée : message oublié en ligne."""
+    m = _PERIODE_TEXTE.search(titre or "")
+    if not m:
+        return False
+    jour, mois, annee = int(m.group(1)), int(m.group(2)), m.group(3)
+    try:
+        if annee:
+            fin = date(int(annee) + (2000 if len(annee) == 2 else 0), mois, jour)
+        else:
+            fin = date(aujourdhui.year, mois, jour)
+            if (aujourdhui - fin).days > 300:  # « au 05/01 » lu en novembre : c'est l'an prochain
+                fin = date(aujourdhui.year + 1, mois, jour)
+    except ValueError:
+        return False
+    return fin < aujourdhui
+
+
+def _periodes(d: dict[str, Any]) -> list[tuple[datetime, datetime]]:
+    return [
+        (date_navitia(p.get("begin")) or datetime.min, date_navitia(p.get("end")) or datetime.max)
+        for p in d.get("application_periods") or []
+    ]
+
+
+def active_a(p: dict[str, Any], quand: datetime) -> bool:
+    """La perturbation s'applique-t-elle à cet instant (heure locale naïve) ?"""
+    periodes = [(date_navitia(a) or datetime.min, date_navitia(b) or datetime.max) for a, b in p.get("periodes") or []]
+    return not periodes or any(a <= quand <= b for a, b in periodes)
+
+
+def _portees(donnees: Any) -> dict[str, set[str]]:
+    """line_reports : arrêts (zones / points) auxquels chaque perturbation est rattachée."""
+    sortie: dict[str, set[str]] = {}
+    for rapport in (donnees or {}).get("line_reports", []) or []:
+        for po in rapport.get("pt_objects", []) or []:
+            type_ = po.get("embedded_type")
+            if type_ not in ("stop_area", "stop_point"):
+                continue
+            interieur = po.get(type_) or {}
+            ids = {l.get("id") for o in (po, interieur) for l in (o.get("links") or []) if l.get("type") == "disruption" and l.get("id")}
+            for i in ids:
+                sortie.setdefault(i, set()).update(cles_perturbation(po))
+    return sortie
+
+
+def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, horizon: timedelta = timedelta(0)) -> list[dict[str, Any]]:
+    """Perturbations actives entre maintenant et maintenant + horizon (heure locale naïve, comme Navitia).
+
+    Chaque perturbation porte sa portée : toute la ligne, un tronçon (arrêts touchés) ou des arrêts précis
+    (station fermée, ascenseur…), ses périodes d'application, et si elle concerne un équipement.
+    """
     maintenant = maintenant or datetime.now()
+    fin_horizon = maintenant + horizon
+    rattachees = _portees(donnees)
     sortie = []
     for d in (donnees or {}).get("disruptions", []) or []:
-        if d.get("status") not in (None, "active"):
+        if d.get("status") not in (None, "active", "future"):
             continue
-        periodes = d.get("application_periods") or []
-        if periodes and not any(
-            (date_navitia(p.get("begin")) or datetime.min) <= maintenant <= (date_navitia(p.get("end")) or datetime.max)
-            for p in periodes
-        ):
+        periodes = _periodes(d)
+        if periodes and not any(a <= fin_horizon and maintenant <= b for a, b in periodes):
             continue
         messages = d.get("messages") or []
         titre = next(
@@ -563,25 +744,126 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None) -> 
         )
         corps = max((_texte(m.get("text")) for m in messages), key=len, default="")
         gravite = d.get("severity") or {}
-        lignes = [
-            o.get("pt_object", {}).get("id")
-            for o in d.get("impacted_objects", []) or []
-            if (o.get("pt_object") or {}).get("embedded_type") == "line"
-        ]
+        ident = d.get("id") or d.get("disruption_id")
+        lignes, troncon, arrets, routes, ligne_entiere = [], set(), set(), set(), False
+        for o in d.get("impacted_objects", []) or []:
+            po = o.get("pt_object") or {}
+            type_ = po.get("embedded_type")
+            arrets_o = set().union(*(cles_perturbation(x) for x in o.get("impacted_stops") or [])) if o.get("impacted_stops") else set()
+            if type_ == "line":
+                lignes.append(po.get("id"))
+            if type_ == "route" and po.get("id"):
+                routes.add(po["id"])
+            if type_ in ("line", "route", "network"):
+                section = o.get("impacted_section") or o.get("impacted_rail_section")
+                if section:
+                    routes |= {r.get("id") for r in section.get("routes") or [] if r.get("id")}
+                    # Les quais touchés (propres à un sens) s'ils sont donnés, sinon les deux bouts du tronçon.
+                    troncon |= arrets_o or (cles_arret(section.get("from")) | cles_arret(section.get("to")))
+                elif arrets_o:
+                    arrets |= arrets_o
+                else:
+                    ligne_entiere = True
+            elif type_ in ("stop_area", "stop_point"):
+                arrets |= cles_perturbation(po) | arrets_o
+        if ligne_entiere and not troncon and not arrets and rattachees.get(ident):
+            # Rattachée à la ligne, mais publiée sur certains arrêts seulement (ex. station non desservie).
+            ligne_entiere, arrets = False, set(rattachees[ident])
+        titre = titre or corps[:120]
         sortie.append(
             {
-                "id": d.get("id") or d.get("disruption_id"),
-                "titre": titre or corps[:120],
+                "id": ident,
+                "titre": titre,
                 "message": corps,
                 "effet": gravite.get("effect") or "UNKNOWN_EFFECT",
                 "gravite": gravite.get("name"),
                 "cause": d.get("cause"),
                 "information": (gravite.get("effect") or "UNKNOWN_EFFECT") in EFFETS_INFO,
                 "lignes": [l for l in lignes if l],
-                "fin": next((p.get("end") for p in periodes if p.get("end")), None),
+                "fin": next((p.get("end") for p in d.get("application_periods") or [] if p.get("end")), None),
+                "periodes": [[p.get("begin"), p.get("end")] for p in d.get("application_periods") or []],
+                # Des arrêts ou un tronçon précisés l'emportent sur la simple mention de la ligne.
+                "portee": "troncon" if troncon else ("arrets" if arrets else "ligne"),
+                "troncon": sorted(troncon),
+                "routes": sorted(routes),
+                "arrets": sorted(arrets),
+                "equipement": bool(_EQUIPEMENT.search(f"{titre} {corps[:200]}")),
+                "perimee": perimee_selon_texte(titre, maintenant.date()),
             }
         )
+    return [p for p in sortie if not p["perimee"]]
+
+
+def concerne_ligne(p: dict[str, Any], ligne_id: str | None) -> bool:
+    """line_reports d'une ligne renvoie aussi les perturbations des autres lignes qui passent par ses arrêts."""
+    return not p.get("lignes") or ligne_id in p["lignes"]
+
+
+_DIRECTION = re.compile(r"\b(?:en\s+)?direction(?:s)?\s+(?:de\s+|d['’]\s*|du\s+|des\s+)?([A-ZÀ-Ý0-9][^.,;:()\n]{2,60})")
+
+
+def directions_citees(texte: str) -> list[str]:
+    """« … non desservis en direction de Saint-Denis Université. » → ["saint denis universite"]."""
+    sortie = []
+    for m in _DIRECTION.finditer(texte or ""):
+        nom = re.split(r"\s+(?:et|ou|puis|à partir|a partir|jusqu|depuis|entre|sont|est|ne|n['’]|reprise|pendant|en raison)\b", m.group(1))[0]
+        if n := normaliser(nom):
+            sortie.append(n)
     return sortie
+
+
+def meme_direction(cite: str, direction: str) -> bool:
+    d = normaliser(re.sub(r"\s*\([^)]*\)\s*$", "", direction or ""))
+    if not d or not cite:
+        return True
+    return cite in d or d in cite or cite.split()[:2] == d.split()[:2]
+
+
+def pertinente(p: dict[str, Any], etape: dict[str, Any], quand: datetime | None = None) -> bool:
+    """Une perturbation de la ligne concerne-t-elle cette étape (portion empruntée, heure de passage) ?
+
+    - toute la ligne : oui ;
+    - tronçon : s'il croise les arrêts parcourus (montée et descente comprises) ;
+    - arrêts précis (station fermée, ascenseur…) : seulement à la montée ou à la descente.
+    Sans liste d'arrêts pour l'étape (ancien trajet), on garde la perturbation.
+    """
+    if quand is not None and not active_a(p, quand):
+        return False
+    if p.get("routes") and etape.get("route_id") and etape["route_id"] not in p["routes"]:
+        return False  # l'autre sens de la ligne
+    if etape.get("direction"):
+        # Message limité à un sens (« … en direction de X ») : l'autre sens n'est pas concerné.
+        cites = directions_citees(f"{p.get('titre') or ''}. {p.get('message') or ''}")
+        if cites and not any(meme_direction(c, etape["direction"]) for c in cites):
+            return False
+    if p.get("portee", "ligne") == "ligne":
+        return True
+    bouts, parcourus = set(etape.get("bouts") or []), set(etape.get("arrets") or [])
+    if not bouts and not parcourus:
+        return True
+    if p.get("troncon") and set(p["troncon"]) & (parcourus | bouts):
+        return True
+    return bool(p.get("arrets") and set(p["arrets"]) & bouts)
+
+
+def niveau_message(p: dict[str, Any]) -> str | None:
+    """Niveau affiché d'un message : interrompu / perturbe / travaux / equipement, ou None (simple information)."""
+    return "equipement" if p.get("equipement") else niveau_perturbation(p)
+
+
+def messages_affiches(perts: list[dict[str, Any]], ignorer_info: bool = True) -> list[dict[str, Any]]:
+    """Messages dédoublonnés (même titre et même texte), du plus grave au moins grave, équipements à la fin."""
+    ordre = {"interrompu": 0, "perturbe": 1, "travaux": 2, None: 3, "equipement": 4}
+    vus: dict[tuple[str, str], dict[str, Any]] = {}
+    for p in perts:
+        niveau = niveau_message(p)
+        if niveau is None and ignorer_info:
+            continue
+        cle = (normaliser(p.get("titre")), normaliser(p.get("message")))
+        if cle in vus:
+            continue
+        vus[cle] = {"id": p.get("id"), "titre": p.get("titre"), "message": p.get("message") if p.get("message") != p.get("titre") else "", "niveau": niveau, "fin": p.get("fin")}
+    return sorted(vus.values(), key=lambda m: ordre.get(m["niveau"], 3))
 
 
 def estimation_marche(lat1: float, lon1: float, lat2: float, lon2: float) -> int:

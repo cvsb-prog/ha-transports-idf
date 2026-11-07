@@ -18,7 +18,6 @@ from . import TransportsConfigEntry
 from .api import pire_niveau
 from .const import (
     SOUS_TRAJET,
-    T_AVANCE,
     T_DEST_NOM,
     T_HEURE,
     T_NOM,
@@ -28,9 +27,17 @@ from .const import (
     T_RESUME,
     T_SECTIONS,
     T_TYPE_HEURE,
+    VEILLE_MINUTES,
 )
-from .trajets import DUREE_DIRECT, EtatTrajet, TraficCoordinator, heure_depart_maison, jours_trajet
 from .sensor import appareil
+from .trajets import (
+    DUREE_DIRECT,
+    EtatTrajet,
+    TraficCoordinator,
+    aussi_feries,
+    heure_depart_maison,
+    jours_trajet,
+)
 
 
 async def async_setup_entry(
@@ -84,7 +91,8 @@ class TrajetSensor(CoordinatorEntity[TraficCoordinator], BinarySensorEntity):
             "heure": d.get(T_HEURE),
             "depart_habituel": heure_depart_maison(d),
             "jours": sorted(jours_trajet(d)),
-            "avance": d.get(T_AVANCE),
+            "jours_feries": aussi_feries(d),
+            "avance": VEILLE_MINUTES,
             "en_veille": e.en_veille,
             "itineraire": d.get(T_RESUME),
             "sections": d.get(T_SECTIONS, []),

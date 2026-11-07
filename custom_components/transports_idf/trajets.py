@@ -11,14 +11,15 @@ Principes :
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -26,9 +27,12 @@ from .api import (
     ClientPrim,
     ErreurJeton,
     ErreurPrim,
+    concerne_ligne,
     date_navitia,
     heure_navitia,
+    messages_affiches,
     niveau_perturbation,
+    pertinente,
     pire_niveau,
     resume_itineraire,
     texte_itineraire,
@@ -38,10 +42,10 @@ from .const import (
     ECART_MINUTES,
     EFFETS_BLOQUANTS,
     EVENEMENT_ALERTE,
+    JOUR_FERIE,
     JOURS_DEFAUT,
     OPT_IGNORER_INFO,
     SOUS_TRAJET,
-    T_AVANCE,
     T_DEST_ID,
     T_DET_DUREE,
     T_DET_HEURE,
@@ -58,6 +62,7 @@ from .const import (
     T_RESUME,
     T_SECTIONS,
     T_TYPE_HEURE,
+    VEILLE_MINUTES,
 )
 from .coordinator import Itineraires, _heure, option, origine_navitia
 
@@ -92,7 +97,63 @@ def _arr(o: dict[str, Any] | None) -> datetime | None:
 
 
 def jours_trajet(d: dict[str, Any]) -> set[int]:
-    return {int(j) for j in (d.get(T_JOURS) or JOURS_DEFAUT)}
+    return {int(j) for j in (d.get(T_JOURS) or JOURS_DEFAUT) if str(j).isdigit()}
+
+
+def aussi_feries(d: dict[str, Any]) -> bool:
+    """Option « Jours fériés » cochée : le trajet a lieu aussi les jours fériés (parmi les jours cochés)."""
+    return JOUR_FERIE in (d.get(T_JOURS) or [])
+
+
+def jour_du_trajet(d: dict[str, Any], jour: date, feries: set[date] | frozenset = frozenset()) -> bool:
+    return jour.weekday() in jours_trajet(d) and (jour not in feries or aussi_feries(d))
+
+
+async def jours_feries(hass: HomeAssistant, debut: date, nombre: int = 9) -> set[date]:
+    """Jours fériés à venir, d'après l'intégration Workday (sa liste, ses exceptions), sinon le calendrier français."""
+    jours = [debut + timedelta(days=n) for n in range(nombre)]
+    feries: set[date] = set()
+    registre = er.async_get(hass)
+    capteur = next((e.entity_id for e in registre.entities.values() if e.platform == "workday" and e.domain == "binary_sensor" and not e.disabled), None)
+    ouvres: set[str] = set()
+    if capteur and hass.services.has_service("workday", "check_date"):
+        etat = hass.states.get(capteur)
+        ouvres = set((etat.attributes.get("workdays") if etat else None) or ["mon", "tue", "wed", "thu", "fri"])
+        noms = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+        for j in jours:
+            if noms[j.weekday()] not in ouvres:
+                continue
+            try:
+                rep = await hass.services.async_call(
+                    "workday", "check_date", {"check_date": j.isoformat()}, target={"entity_id": capteur}, blocking=True, return_response=True
+                )
+            except Exception as err:  # noqa: BLE001 — Workday indisponible : on passe au calendrier
+                _LOGGER.debug("Workday check_date %s : %s", j, err)
+                ouvres = set()
+                break
+            if (rep or {}).get(capteur, {}).get("workday") is False:
+                feries.add(j)
+    # Jours que Workday ne juge pas (week-end) ou sans Workday : calendrier français.
+    noms = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    calendrier = set().union(*(feries_france(a) for a in {j.year for j in jours}))
+    feries |= {j for j in jours if j in calendrier and noms[j.weekday()] not in ouvres}
+    return feries
+
+
+def feries_france(annee: int) -> set[date]:
+    """Jours fériés nationaux (métropole) : dates fixes et fêtes mobiles calculées depuis Pâques."""
+    a, b, c = annee % 19, annee // 100, annee % 100
+    d, e = b // 4, b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = c // 4, c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    mois = (h + l - 7 * m + 114) // 31
+    paques = date(annee, mois, (h + l - 7 * m + 114) % 31 + 1)
+    fixes = {(1, 1), (5, 1), (5, 8), (7, 14), (8, 15), (11, 1), (11, 11), (12, 25)}
+    return {date(annee, mo, j) for mo, j in fixes} | {paques + timedelta(days=n) for n in (1, 39, 50)}
 
 
 def avec_detour(d: dict[str, Any], jour: date) -> bool:
@@ -136,19 +197,22 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         self.client = client
         self.calcul = calcul
         self.etats: dict[str, EtatTrajet] = {}
+        self.feries: set[date] = set()
+        self._feries_le: date | None = None
+        self._par_ligne: dict[str, list[dict[str, Any]]] = {}
 
     def _trajets(self):
         return [s for s in self.config_entry.subentries.values() if s.subentry_type == SOUS_TRAJET]
 
     # ---- Calendrier ---------------------------------------------------------
     @staticmethod
-    def fenetre(heure: str, avance: int, maintenant: datetime, jours: set[int] | None = None) -> bool:
-        """Vrai si maintenant est dans [départ − avance ; départ + 10 min] (heure locale), un jour du trajet."""
+    def fenetre(heure: str, avance: int, maintenant: datetime, jours: set[int] | None = None, exclus: set[date] | frozenset = frozenset()) -> bool:
+        """Vrai si maintenant est dans [départ − avance ; départ + 10 min] (heure locale), un jour du trajet (hors jours exclus)."""
         base = maintenant.replace(hour=0, minute=0, second=0, microsecond=0)
         h = _heure(heure)
         for decalage in (-1, 0, 1):
             d = base + timedelta(days=decalage, hours=h.hour, minutes=h.minute)
-            if jours is not None and d.weekday() not in jours:
+            if (jours is not None and d.weekday() not in jours) or d.date() in exclus:
                 continue
             if d - timedelta(minutes=avance) <= maintenant <= d + APRES_DEPART:
                 return True
@@ -157,10 +221,9 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
     def prochaine_occurrence(self, d: dict[str, Any], maintenant: datetime) -> date:
         """Jour de la prochaine occurrence du trajet (aujourd'hui tant que le départ habituel n'est pas passé)."""
         h = _heure(heure_depart_maison(d))
-        jours = jours_trajet(d)
         for n in range(8):
             jour = (maintenant + timedelta(days=n)).date()
-            if jour.weekday() not in jours:
+            if not jour_du_trajet(d, jour, self.feries):
                 continue
             if n == 0 and maintenant > datetime.combine(jour, h) + APRES_DEPART:
                 continue
@@ -295,13 +358,19 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         if lignes and all(isinstance(r, Exception) for r in resultats):
             raise UpdateFailed(f"Info trafic indisponible : {resultats[0]}")
         par_ligne = {l: r for l, r in zip(lignes, resultats, strict=True) if isinstance(r, list)}
+        self._par_ligne = par_ligne
+        if self._feries_le != maintenant.date():
+            self.feries = await jours_feries(self.hass, maintenant.date() - timedelta(days=1))
+            self._feries_le = maintenant.date()
 
         ignorer_info = option(self.config_entry, OPT_IGNORER_INFO)
+        self.calcul.ignorer_info = ignorer_info
         une_veille = False
         for t in trajets:
             etat = self.etats.setdefault(t.subentry_id, EtatTrajet())
-            self._perturbations(t, etat, par_ligne, ignorer_info)
-            etat.en_veille = self.fenetre(heure_depart_maison(t.data), int(t.data.get(T_AVANCE, 60)), maintenant, jours_trajet(t.data))
+            exclus = set() if aussi_feries(t.data) else self.feries
+            etat.en_veille = self.fenetre(heure_depart_maison(t.data), VEILLE_MINUTES, maintenant, jours_trajet(t.data), exclus)
+            self._perturbations(t, etat, par_ligne, ignorer_info, maintenant)
             une_veille |= etat.en_veille
             await self._nominal(t, etat, maintenant)
             if etat.en_veille:
@@ -320,37 +389,57 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         self.update_interval = VEILLE if une_veille else REPOS
         return dict(self.etats)
 
-    def _perturbations(self, t, etat: EtatTrajet, par_ligne: dict, ignorer_info: bool) -> None:
-        noms = {sec["ligne_id"]: sec for sec in t.data.get(T_SECTIONS, []) if sec.get("ligne_id")}
+    def _perturbations(self, t, etat: EtatTrajet, par_ligne: dict, ignorer_info: bool, maintenant: datetime) -> None:
+        """Perturbations qui touchent la portion empruntée du trajet habituel, à l'heure où on y passe.
+
+        Pendant la veille : maintenant ; sinon : à la prochaine occurrence. Les équipements (ascenseurs…) n'alertent pas.
+        """
+        d = t.data
+        if etat.en_veille:
+            reference = maintenant
+        else:
+            reference = datetime.combine(self.prochaine_occurrence(d, maintenant), _heure(heure_depart_maison(d)))
+        # Arrêts parcourus : ceux du trajet habituel recalculé (à jour), sinon ceux enregistrés à la création.
+        etapes = {e.get("ligne_id"): e for e in d.get(T_ETAPES) or [] if e.get("type") == "transport" and e.get("ligne_id")}
+        for e in (etat.nominal or {}).get("etapes") or []:
+            if e.get("type") == "transport" and e.get("ligne_id") in etapes and e.get("arrets"):
+                etapes[e["ligne_id"]] = e
+        noms = {sec["ligne_id"]: sec for sec in d.get(T_SECTIONS, []) if sec.get("ligne_id")}
         perts: dict[str, dict[str, Any]] = {}
         niveaux: dict[str, list] = {}
         for lid, sec in noms.items():
+            etape = etapes.get(lid) or {}
             for p in par_ligne.get(lid, []):
+                if not concerne_ligne(p, lid):
+                    continue
                 niveau = niveau_perturbation(p)
-                if ignorer_info and niveau in (None, "travaux") and p["information"]:
+                if p.get("equipement") or (ignorer_info and niveau in (None, "travaux") and p["information"]):
+                    continue
+                if not pertinente(p, etape, reference):
                     continue
                 niveaux.setdefault(lid, []).append(niveau)
-                d = perts.setdefault(p["id"], {**p, "niveau": niveau, "lignes_trajet": [], "_ids": []})
+                x = perts.setdefault(p["id"], {**p, "niveau": niveau, "lignes_trajet": [], "lignes_ids": []})
                 nom = f"{sec.get('mode') or ''} {sec.get('nom') or ''}".strip()
-                if nom not in d["lignes_trajet"]:
-                    d["lignes_trajet"].append(nom)
-                    d["_ids"].append(lid)
-        etat.bloquees = sorted({lid for p in perts.values() if p["effet"] in EFFETS_BLOQUANTS for lid in p["_ids"]})
-        etat.perturbations = [{k: v for k, v in p.items() if k != "_ids"} for p in perts.values()]
+                if lid not in x["lignes_ids"]:
+                    x["lignes_trajet"].append(nom)
+                    x["lignes_ids"].append(lid)
+        etat.bloquees = sorted({lid for p in perts.values() if p["effet"] in EFFETS_BLOQUANTS for lid in p["lignes_ids"]})
+        garder = ("id", "titre", "message", "niveau", "effet", "gravite", "cause", "fin", "lignes", "lignes_trajet", "lignes_ids", "information")
+        etat.perturbations = [{k: p.get(k) for k in garder} for p in perts.values()]
         etat.niveaux = {lid: pire_niveau(n) for lid, n in niveaux.items()}
 
     def _preferees(self, t) -> list[str]:
         return [s["ligne_id"] for s in t.data.get(T_SECTIONS, []) if s.get("ligne_id")]
 
     async def _enrichir(self, its: list[dict[str, Any]], etat: EtatTrajet) -> None:
-        self.calcul.alertes(its, etat.niveaux)
+        await self.calcul.alertes(its, self._par_ligne)
         await self.calcul.suivants(its)
 
     async def _nominal(self, t, etat: EtatTrajet, maintenant: datetime) -> None:
         """Préféré pour la prochaine occurrence : une fois par jour, et à chaque mise à jour pendant la veille."""
         jour = self.prochaine_occurrence(t.data, maintenant)
         if not etat.en_veille and etat.nominal_jour == jour and etat.nominal_le and maintenant - etat.nominal_le < timedelta(hours=12):
-            self.calcul.alertes([etat.nominal] if etat.nominal else [], etat.niveaux)
+            await self.calcul.alertes([etat.nominal] if etat.nominal else [], self._par_ligne)
             return
         plans = await self._plans(t, jour, None, self._preferees(t), [])
         etat.nominal = plans[0] if plans else None
@@ -385,15 +474,23 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         """Heure de départ de la maison pour l'occurrence du jour (meilleure option, préférées ou non)."""
         d = t.data
         jour = self.prochaine_occurrence(d, maintenant)
-        if jour.weekday() not in jours_trajet(d):
+        if not jour_du_trajet(d, jour, self.feries):
             etat.rappel = None
             return
         plans = await self._plans(t, jour, None, None, etat.bloquees, 3)
+        cible = datetime.combine(jour, _heure(d[T_HEURE]))
         if d.get(T_TYPE_HEURE) == "arrivee":
-            meilleur = max(plans, key=_dep, default=None)
+            # Départs encore possibles : ceux calculés pour l'heure d'arrivée et ceux au départ de maintenant.
+            candidats = plans + list(etat.direct) if jour == maintenant.date() else plans
+            if jour == maintenant.date():
+                candidats = [o for o in candidats if _dep(o) and _dep(o) >= maintenant - timedelta(minutes=1)]
+            a_l_heure = [o for o in candidats if _arr(o) and _arr(o) <= cible]
+            if a_l_heure:
+                meilleur = max(a_l_heure, key=_dep)  # le plus tard possible en arrivant à l'heure
+            else:
+                meilleur = min(candidats, key=lambda o: _arr(o) or datetime.max, default=None)  # en retard : arriver au plus tôt
         else:
             meilleur = min(plans, key=lambda o: _arr(o) or datetime.max, default=None)
-        cible = datetime.combine(jour, _heure(d[T_HEURE]))
         habituel = datetime.combine(jour, _heure(heure_depart_maison(d)))
         if meilleur is None:
             etat.rappel = {"impossible": True, "heure_cible": _h(cible), "type_heure": d.get(T_TYPE_HEURE, "depart")}
@@ -404,6 +501,7 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
             **meilleur,
             "type_heure": d.get(T_TYPE_HEURE, "depart"),
             "heure_cible": _h(cible),
+            "cible_iso": dt_util.as_utc(cible.replace(tzinfo=dt_util.get_default_time_zone())).isoformat(),
             "depart_iso": dt_util.as_utc(depart.replace(tzinfo=dt_util.get_default_time_zone())).isoformat(),
             # > 0 : partir plus tôt que d'habitude (seulement pour une heure d'arrivée ou un détour à heure imposée)
             "avance": round((habituel - depart).total_seconds() / 60)
@@ -423,6 +521,11 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
                 await self._direct(t, etat, maintenant)
             except ConfigEntryAuthFailed as err:
                 raise HomeAssistantError("Jeton PRIM refusé") from err
+            except HomeAssistantError:
+                raise
+            except Exception as err:
+                _LOGGER.exception("Calcul au départ de maintenant impossible pour %s", t.title)
+                raise HomeAssistantError(f"Calcul impossible ({type(err).__name__} : {err or 'sans détail'}) — voir le journal") from err
             self.async_update_listeners()
         return {"le": dt_util.utcnow().isoformat(), "itineraires": etat.direct}
 
@@ -476,5 +579,8 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
             etapes = [{"type": "transport", **{k: s.get(k) for k in ("nom", "mode", "couleur", "couleur_texte", "ligne_id", "de", "vers", "direction")}} for s in sous.data.get(T_SECTIONS, [])]
         for e in etapes:
             if e.get("type") == "transport":
-                e["alerte"] = etat.niveaux.get(e.get("ligne_id")) or self.calcul.niveau_ligne(e.get("ligne_id"))
+                lid = e.get("ligne_id")
+                niveau = etat.niveaux.get(lid)
+                e["alerte"] = niveau if niveau and niveau != "normal" else None
+                e["messages"] = messages_affiches([p for p in etat.perturbations if lid in (p.get("lignes_ids") or [])], False)
         return etapes

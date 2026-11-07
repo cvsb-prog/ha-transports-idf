@@ -24,6 +24,9 @@ itineraire:
     heure:
       selector:
         time:
+    date:
+      selector:
+        date:
     type_heure:
       default: depart
       selector:

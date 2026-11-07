@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "transports_idf"
 NOM = "Transports IDF"
-VERSION = "0.8.1"
+VERSION = "0.9.4"
 
 BASE_URL = "https://prim.iledefrance-mobilites.fr/marketplace"
 NAVITIA = f"{BASE_URL}/v2/navitia"
@@ -21,6 +21,7 @@ OPT_DEBUT_NUIT = "debut_nuit"
 OPT_FIN_NUIT = "fin_nuit"
 OPT_NB_PASSAGES = "nb_passages"
 OPT_IGNORER_INFO = "ignorer_information"
+OPT_CLE_CARTO = "cle_carto"  # clé gratuite CARTO (fond de carte plus sobre) ; vide : OpenStreetMap
 OPT_LIGNES_INTERET = "lignes_interet"  # [{id, code, nom, mode, couleur, couleur_texte}]
 
 DEFAUTS = {
@@ -61,7 +62,8 @@ T_TYPE_HEURE = "type_heure"  # "arrivee" ou "depart"
 T_DEPART_HABITUEL = "depart_habituel"  # « HH:MM:SS », départ de l'itinéraire choisi
 T_ARRIVEE_HABITUELLE = "arrivee_habituelle"
 T_DUREE = "duree"  # secondes
-T_AVANCE = "avance"  # minutes de veille avant le départ
+T_AVANCE = "avance"  # ancien réglage de veille (ignoré : la veille commence VEILLE_MINUTES avant le départ habituel)
+VEILLE_MINUTES = 60
 T_SECTIONS = "sections"  # [{ligne_id, code, mode, couleur, de, vers, direction}]
 T_RESUME = "resume"
 T_ETAPES = "etapes"  # étapes de l'itinéraire choisi (résumé replié de la carte)
@@ -78,6 +80,7 @@ T_DET_PAUSE = "detour_pause"  # minutes sur place
 T_DET_HEURE = "detour_heure"  # « HH:MM:SS » : heure d'arrivée imposée au détour (facultatif)
 T_DET_JOURS = "detour_jours"
 JOURS_DEFAUT = ["0", "1", "2", "3", "4"]
+JOUR_FERIE = "feries"  # dans T_JOURS : le trajet a lieu aussi les jours fériés
 MODES_DETOUR = {"marche": "walking", "velo": "bike", "voiture": "car"}
 
 # Écart à partir duquel on conseille de partir plus tôt / un autre itinéraire

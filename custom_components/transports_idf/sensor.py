@@ -28,6 +28,7 @@ from .const import (
     DOMAIN,
     ETAT_ATTEIGNABLE,
     NOM,
+    OPT_CLE_CARTO,
     OPT_MARGE,
     OPT_NB_PASSAGES,
     SOUS_ARRET,
@@ -136,4 +137,10 @@ class InfoTraficSensor(CoordinatorEntity[InfoTraficCoordinator], SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"type_transports_idf": "info_trafic", "lignes": self.coordinator.data or [], "mis_a_jour": dt_util.utcnow().isoformat()}
+        return {
+            "type_transports_idf": "info_trafic",
+            "lignes": self.coordinator.data or [],
+            "mis_a_jour": dt_util.utcnow().isoformat(),
+            # Fond des cartes de la carte du tableau de bord : CARTO avec la clé de l'utilisateur, sinon OpenStreetMap.
+            "cle_carto": (self.coordinator.config_entry.options.get(OPT_CLE_CARTO) or "").strip() or None,
+        }
