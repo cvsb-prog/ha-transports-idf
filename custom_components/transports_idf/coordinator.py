@@ -19,6 +19,7 @@ from .api import (
     ErreurPrim,
     active_a,
     cles_arret,
+    concerne_ligne,
     date_navitia,
     messages_affiches,
     pertinente,
@@ -321,6 +322,8 @@ class Itineraires:
                 lid = e.get("ligne_id")
                 vues: dict[str, dict[str, Any]] = {}
                 for p in (self._connues(lid) or []) + extra.get(lid, []):
+                    if not concerne_ligne(p, lid):
+                        continue
                     vues.setdefault(p.get("id") or p.get("titre"), p)
                 quand = date_navitia(e.get("depart_brut"))
                 touchent = [p for p in vues.values() if pertinente(p, e, quand)]
@@ -486,7 +489,7 @@ class InfoTraficCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         maintenant_local = dt_util.now().replace(tzinfo=None)
         suivis = self._arrets_suivis()
         for l in lignes:
-            ps = [par_id[i] for i in par_ligne.get(l["id"], set()) if i in par_id]
+            ps = [par_id[i] for i in par_ligne.get(l["id"], set()) if i in par_id and concerne_ligne(par_id[i], l["id"])]
             self.par_ligne[l["id"]] = ps
             # Panneau de la ligne : messages en cours ; les équipements (ascenseurs…) seulement aux arrêts suivis.
             en_cours = [p for p in ps if active_a(p, maintenant_local) and (not p.get("equipement") or set(p.get("arrets") or []) & suivis)]

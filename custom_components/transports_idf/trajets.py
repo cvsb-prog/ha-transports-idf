@@ -27,6 +27,7 @@ from .api import (
     ClientPrim,
     ErreurJeton,
     ErreurPrim,
+    concerne_ligne,
     date_navitia,
     heure_navitia,
     messages_affiches,
@@ -409,6 +410,8 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         for lid, sec in noms.items():
             etape = etapes.get(lid) or {}
             for p in par_ligne.get(lid, []):
+                if not concerne_ligne(p, lid):
+                    continue
                 niveau = niveau_perturbation(p)
                 if p.get("equipement") or (ignorer_info and niveau in (None, "travaux") and p["information"]):
                     continue

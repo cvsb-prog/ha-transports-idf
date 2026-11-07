@@ -69,6 +69,7 @@ from .const import (
     JOURS_DEFAUT,
     MODES_DETOUR,
     NOM,
+    OPT_CLE_CARTO,
     OPT_DEBUT_NUIT,
     OPT_FIN_NUIT,
     OPT_IGNORER_INFO,
@@ -235,6 +236,7 @@ class TransportsOptionsFlow(OptionsFlow):
                 vol.Required(OPT_DEBUT_NUIT, default=o[OPT_DEBUT_NUIT]): TimeSelector(),
                 vol.Required(OPT_FIN_NUIT, default=o[OPT_FIN_NUIT]): TimeSelector(),
                 vol.Required(OPT_IGNORER_INFO, default=o[OPT_IGNORER_INFO]): BooleanSelector(),
+                vol.Optional(OPT_CLE_CARTO, description={"suggested_value": o.get(OPT_CLE_CARTO, "")}): TextSelector(),
             }
         )
         return self.async_show_form(step_id="reglages", data_schema=schema)

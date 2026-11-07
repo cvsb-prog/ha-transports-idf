@@ -3,7 +3,7 @@
 Intégration Home Assistant pour les transports en commun d'Île-de-France, à partir des API
 [PRIM](https://prim.iledefrance-mobilites.fr/) d'Île-de-France Mobilités, avec sa carte de tableau de bord.
 
-Version actuelle : **0.9.2** (voir le [CHANGELOG](CHANGELOG.md)).
+Version actuelle : **0.9.3** (voir le [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctionnalités
 
@@ -21,6 +21,7 @@ Version actuelle : **0.9.2** (voir le [CHANGELOG](CHANGELOG.md)).
 ## Carte de tableau de bord
 
 La carte `custom:transports-idf-card` est servie par l'intégration (aucune ressource à ajouter à la main). Elle présente : recherche d'itinéraire, trajets, info trafic, arrêts.
+Elle se règle depuis l'éditeur visuel (sections à masquer, arrêts à afficher).
 
 ## Installation
 
@@ -33,6 +34,10 @@ Installation manuelle (HACS prévu une fois l'intégration mûre) :
 4. Ajouter des arrêts et des trajets depuis la page de l'intégration.
 
 Mise à jour : remplacer le dossier, redémarrer, actualiser le navigateur. Réglages, arrêts et trajets sont conservés.
+
+### Fond des cartes
+
+Sans réglage, les cartes utilisent OpenStreetMap. Avec une clé gratuite CARTO (Configurer → Réglages), elles utilisent les fonds CARTO clair et sombre.
 
 ## Données envoyées
 
