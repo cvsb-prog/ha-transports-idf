@@ -4,10 +4,12 @@ from __future__ import annotations
 
 DOMAIN = "transports_idf"
 NOM = "Transports IDF"
-VERSION = "0.10.0"
+VERSION = "0.10.8"
 
 BASE_URL = "https://prim.iledefrance-mobilites.fr/marketplace"
 NAVITIA = f"{BASE_URL}/v2/navitia"
+# Tracés des lignes (formes du GTFS), open data IDFM, sans clé : PRIM ne les fournit pas.
+TRACES_OPENDATA = "https://data.iledefrance-mobilites.fr/api/explore/v2.1/catalog/datasets/traces-des-lignes-de-transport-en-commun-idfm/records"
 
 # Entrée principale
 CONF_JETON = "jeton"

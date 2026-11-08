@@ -747,7 +747,7 @@ class TrajetFlow(_Base):
             T_ORIGINE: self._zone or self._zone_defaut(),
             T_ORIGINE_ID: self._origine["id"] if self._origine else None,
             T_ORIGINE_NOM: _libelle_lieu(self._origine) if self._origine else None,
-            T_ETAPES: [{k: v for k, v in e.items() if k not in ("depart", "arrivee", "depart_brut", "suivants", "rame", "alerte", "messages", "trace")} for e in choix.get("etapes", [])],
+            T_ETAPES: [{k: v for k, v in e.items() if k not in ("depart", "arrivee", "depart_brut", "suivants", "rame", "alerte", "messages", "trace", "points_arret")} for e in choix.get("etapes", [])],
             T_HEURE: self._saisie[T_HEURE],
             T_TYPE_HEURE: self._saisie.get(T_TYPE_HEURE, "depart"),
             T_DEPART_HABITUEL: self._depart_maison(choix),

@@ -5,7 +5,7 @@
  * à l'intérieur, propositions et alertes sont repliées ; les gares se replient d'un clic.
  * Passages : vert = atteignable (départ ≥ marche + marge), orange = en se pressant, gris = trop tard.
  */
-const VERSION = "0.10.0";
+const VERSION = "0.10.8";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },
@@ -56,6 +56,27 @@ const dateNavitia = (x) => {
   return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)).getTime() : null;
 };
 const heureCourte = (h) => (h ? `${Number(h.slice(0, 2))} h ${h.slice(3, 5)}` : "");
+// Portion d'un tracé entre les arrêts touchés les plus éloignés (arrêts à moins de ~200 m du tracé).
+const decouper = (trace, touches) => {
+  if (!trace?.length || touches.length < 2) return null;
+  const proche = (p) => {
+    let i = 0, d = Infinity;
+    trace.forEach((q, n) => {
+      const dd = (q[0] - p[0]) ** 2 + ((q[1] - p[1]) * 0.66) ** 2;
+      if (dd < d) { d = dd; i = n; }
+    });
+    return { i, d };
+  };
+  const idx = touches.map(proche).filter((x) => x.d < 4e-6).map((x) => x.i);
+  if (idx.length < 2) return null;
+  const a = Math.min(...idx), b = Math.max(...idx);
+  return a === b ? null : { avant: trace.slice(0, a + 1), gris: trace.slice(a, b + 1), apres: trace.slice(b) };
+};
+// Messages « interrompu » d'une étape ou d'une ligne → noms d'arrêts touchés, et si toute la ligne l'est.
+const interruptions = (messages) => {
+  const ms = (messages || []).filter((m) => m.niveau === "interrompu");
+  return { noms: new Set(ms.flatMap((m) => m.arrets_touches || [])), toute: ms.some((m) => !(m.arrets_touches || []).length) };
+};
 // Nom d'arrêt comparable (comme côté intégration) : sans la commune entre parenthèses, sans accents ni ponctuation.
 const nomArret = (t) => String(t || "").replace(/\s*\([^)]*\)\s*$/, "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 const norm = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]/g, "");
@@ -505,10 +526,13 @@ class TransportsIdfCard extends HTMLElement {
     const segments = [];
     const correspondances = [];
     for (const e of etapes) {
-      const pts = e.trace?.length > 1 ? e.trace : e.de_coord && e.vers_coord ? [e.de_coord, e.vers_coord] : null;
+      const parArrets = e.points_arret?.length > 1 ? e.points_arret.map((x) => [x[1], x[2]]) : null;
+      const pts = e.trace?.length > 1 ? e.trace : parArrets || (e.de_coord && e.vers_coord ? [e.de_coord, e.vers_coord] : null);
       if (!pts) continue;
       if (e.type === "transport") {
-        segments.push({ points: pts, couleur: e.couleur || null });
+        const { noms, toute } = interruptions(e.messages);
+        const touches = (e.points_arret || []).filter((x) => noms.has(x[0])).map((x) => [x[1], x[2]]);
+        segments.push({ points: pts, couleur: e.couleur || null, interrompu: toute, touches });
         correspondances.push(pts[0]);
       } else segments.push({ points: pts, pied: true });
     }
@@ -519,7 +543,7 @@ class TransportsIdfCard extends HTMLElement {
     let carte = "";
     if (ouvert) {
       this._donneesCartes.set(cle, { segments, a: tous[0], b: tous[tous.length - 1], points: correspondances.slice(1) });
-      carte = `<li class="carte-marche carte-globale"><span></span><span class="plan"><div class="carte-l" data-carte="${echapper(cle)}"></div></span></li>`;
+      carte = `<li class="carte-marche carte-globale"><span class="plan"><div class="carte-l" data-carte="${echapper(cle)}"></div></span></li>`;
     }
     return `<li class="marche cliquable voir-carte" data-bascule="${echapper(cle)}" data-defaut="0" role="button" tabindex="0" aria-expanded="${ouvert}"><span class="h"></span><span class="lien-carte">${ouvert ? "Masquer la carte" : "Voir le trajet sur la carte"}</span></li>${carte}`;
   }
@@ -533,8 +557,7 @@ class TransportsIdfCard extends HTMLElement {
     let carte = "";
     if (ouvert) {
       this._donneesCartes.set(cle, { trace: e.trace, a, b });
-      const pied = `https://www.openstreetmap.org/directions?engine=fossgis_osrm_foot&route=${a[0]}%2C${a[1]}%3B${b[0]}%2C${b[1]}`;
-      carte = `<li class="carte-marche"><span></span><span class="plan"><div class="carte-l" data-carte="${echapper(cle)}"></div><a href="${echapper(pied)}" target="_blank" rel="noopener">Itinéraire à pied détaillé ↗</a></span></li>`;
+      carte = `<li class="carte-marche"><span class="plan"><div class="carte-l" data-carte="${echapper(cle)}"></div></span></li>`;
     }
     return `<li class="marche cliquable" data-bascule="${echapper(cle)}" data-defaut="0" role="button" tabindex="0" aria-expanded="${ouvert}"><span class="h"></span><span class="lien-carte">${texte}</span></li>${carte}`;
   }
@@ -568,28 +591,25 @@ class TransportsIdfCard extends HTMLElement {
     return !!this._hass?.themes?.darkMode;
   }
 
-  // Fond de carte : CARTO (clair / sombre) si une clé est donnée dans les réglages de l'intégration,
-  // sinon OpenStreetMap, assombri par un filtre avec le thème sombre.
+  // Fond de carte : CARTO Voyager si une clé est donnée dans les réglages de l'intégration, sinon OpenStreetMap.
+  // En thème sombre, le fond reste clair mais atténué (plus lisible qu'un fond sombre).
   _fond() {
     const info = Object.values(this._hass?.states || {}).find((e) => e.attributes?.type_transports_idf === "info_trafic");
     const cle = info?.attributes?.cle_carto || "";
     const sombre = this._sombre();
     if (cle) {
       return {
-        // Adresse documentée par CARTO (rastertiles/…) ; l'ancienne adresse sert de secours si elle échoue.
-        url: `https://{s}.basemaps.cartocdn.com/rastertiles/${sombre ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(cle)}`,
-        secours: `https://{s}.basemaps.cartocdn.com/${sombre ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(cle)}`,
+        url: `https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(cle)}`,
         options: { subdomains: "abcd", maxZoom: 20, attribution: ATTR_CARTO, referrerPolicy: "strict-origin-when-cross-origin" },
-        filtre: false,
+        attenue: sombre,
         signature: `carto|${sombre}|${cle}`,
       };
     }
     // Home Assistant n'envoie pas de « Referer » : OpenStreetMap refuse alors les tuiles (403 « Access blocked »).
-    // On envoie au moins l'origine (adresse de ton Home Assistant), comme le demande sa politique d'usage.
     return {
       url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
       options: { maxZoom: 19, attribution: ATTR_OSM, referrerPolicy: "strict-origin-when-cross-origin" },
-      filtre: sombre,
+      attenue: sombre,
       signature: `osm|${sombre}`,
     };
   }
@@ -598,17 +618,34 @@ class TransportsIdfCard extends HTMLElement {
     const f = this._fond();
     if (c.tuiles) c.tuiles.remove();
     c.tuiles = L.tileLayer(f.url, f.options).addTo(c.carte);
-    if (f.secours) {
-      let erreurs = 0;
-      c.tuiles.on("tileerror", () => {
-        if (++erreurs === 2 && c.tuiles?._url === f.url) c.tuiles.setUrl(f.secours);
-      });
-    }
     c.signature = f.signature;
-    c.el.classList.toggle("sombre", f.filtre);
+    c.el.classList.toggle("attenue", f.attenue);
+  }
+
+  // Les cartes prennent toute la largeur de la carte du tableau de bord, quel que soit le retrait de l'étape.
+  _elargirCartes() {
+    const hc = this.shadowRoot.querySelector("ha-card");
+    if (!hc) return;
+    const r = hc.getBoundingClientRect();
+    const st = getComputedStyle(hc);
+    const gauche = r.left + (parseFloat(st.paddingLeft) || 0);
+    const largeur = r.width - (parseFloat(st.paddingLeft) || 0) - (parseFloat(st.paddingRight) || 0);
+    for (const place of this.shadowRoot.querySelectorAll("[data-carte]")) {
+      place.style.marginLeft = "0px";
+      const decalage = place.getBoundingClientRect().left - gauche;
+      if (largeur <= 0) continue;
+      place.style.marginLeft = `${-decalage}px`;
+      place.style.width = `${largeur}px`;
+    }
+    for (const c of this._cartes.values()) c.carte?.invalidateSize();
   }
 
   _monterCartes() {
+    if (!this._observateur && window.ResizeObserver) {
+      this._observateur = new ResizeObserver(() => this._elargirCartes());
+      const hc = this.shadowRoot.querySelector("ha-card");
+      if (hc) this._observateur.observe(hc);
+    }
     const places = [...this.shadowRoot.querySelectorAll("[data-carte]")];
     const vues = new Set();
     for (const place of places) {
@@ -634,6 +671,24 @@ class TransportsIdfCard extends HTMLElement {
         this._cartes.delete(cle);
       }
     }
+    if (places.length) this._elargirCartes();
+  }
+
+  // Une ligne sur la carte ; la portion interrompue (ou toute la ligne) en pointillés gris.
+  _tracer(L, c, points, couleur, toute, touches, epaisseur, sansLisere = false) {
+    const gris = this._sombre() ? "#b0b0b0" : "#757575";
+    const lisere = (pts) => !sansLisere && L.polyline(pts, { color: this._sombre() ? "#000" : "#fff", weight: epaisseur + 3, opacity: 0.6 }).addTo(c.carte);
+    const plein = (pts) => { lisere(pts); L.polyline(pts, { color: couleur, weight: epaisseur, opacity: 1 }).addTo(c.carte); };
+    const coupe = (pts) => {
+      L.polyline(pts, { color: gris, weight: epaisseur, opacity: 0.25 }).addTo(c.carte);
+      L.polyline(pts, { color: gris, weight: epaisseur - 1, opacity: 1, dashArray: "2 9", lineCap: "round" }).addTo(c.carte);
+    };
+    if (toute) return coupe(points);
+    const p = decouper(points, touches || []);
+    if (!p) return plein(points);
+    plein(p.avant);
+    plein(p.apres);
+    coupe(p.gris);
   }
 
   async _creerCarte(cle, c) {
@@ -664,22 +719,20 @@ class TransportsIdfCard extends HTMLElement {
       points = d.segments.flatMap((x) => x.points);
       for (const x of d.segments) {
         if (x.pied) L.polyline(x.points, { color: gris, weight: 4, opacity: 0.9, dashArray: "1 8", lineCap: "round" }).addTo(c.carte);
-        else {
-          L.polyline(x.points, { color: this._sombre() ? "#000" : "#fff", weight: 9, opacity: 0.6 }).addTo(c.carte);
-          L.polyline(x.points, { color: x.couleur || couleur, weight: 6, opacity: 1 }).addTo(c.carte);
-        }
+        else this._tracer(L, c, x.points, x.couleur || couleur, x.interrompu, x.touches, 6);
       }
       for (const p of d.points || []) L.circleMarker(p, { radius: 5, color: gris, weight: 2, fillColor: "#fff", fillOpacity: 1 }).addTo(c.carte);
     } else if (d.lignes) {
       // Plan d'une ligne : son tracé, ses arrêts ; ceux cités par un message en rouge.
       points = d.lignes.flat();
-      for (const t of d.lignes) L.polyline(t, { color: d.couleur || couleur, weight: 5, opacity: 0.95 }).addTo(c.carte);
+      const touches = (d.arrets || []).filter((a) => d.touches?.has(nomArret(a.nom))).map((a) => [a.lat, a.lon]);
+      for (const t of d.lignes) this._tracer(L, c, t, d.couleur || couleur, d.toute, touches, 5, true);
       for (const a of d.arrets || []) {
-        const touche = d.touches?.has(nomArret(a.nom));
+        const touche = d.toute || d.touches?.has(nomArret(a.nom));
         L.circleMarker([a.lat, a.lon], touche
-          ? { radius: 6, color: "#fff", weight: 2, fillColor: "#e53935", fillOpacity: 1 }
+          ? { radius: 4, color: gris, weight: 2, fillColor: this._sombre() ? "#333" : "#e0e0e0", fillOpacity: 1, dashArray: "2 2" }
           : { radius: 3.5, color: d.couleur || couleur, weight: 2, fillColor: "#fff", fillOpacity: 1 })
-          .bindTooltip(echapper(a.nom) + (touche ? " · perturbé" : ""), { direction: "top" })
+          .bindTooltip(echapper(a.nom) + (touche ? " · non desservi" : ""), { direction: "top" })
           .addTo(c.carte);
         if (!d.lignes.length) points.push([a.lat, a.lon]);
       }
@@ -859,8 +912,8 @@ class TransportsIdfCard extends HTMLElement {
       if (!plan) corps = `<div class="sous">Chargement du plan…</div>`;
       else if (plan.erreur || (!plan.traces?.length && !plan.arrets?.length)) corps = `<div class="sous">Plan indisponible.</div>`;
       else {
-        const touches = new Set((ligne.perturbations || []).filter((p) => p.niveau !== "equipement").flatMap((p) => p.arrets_touches || []));
-        this._donneesCartes.set(cle, { lignes: plan.traces || [], arrets: plan.arrets || [], couleur: ligne.couleur || plan.couleur, touches });
+        const { noms, toute } = interruptions(ligne.perturbations);
+        this._donneesCartes.set(cle, { lignes: plan.traces || [], arrets: plan.arrets || [], couleur: ligne.couleur || plan.couleur, touches: noms, toute });
         corps = `<div class="plan plan-ligne"><div class="carte-l" data-carte="${echapper(cle)}"></div></div>`;
       }
     }
@@ -933,9 +986,6 @@ class TransportsIdfCard extends HTMLElement {
     return {
       cle: `plan|${lat},${lon}`,
       donnees: { a: depart, b: [lat, lon], ligne: false },
-      pied: depart
-        ? `https://www.openstreetmap.org/directions?engine=fossgis_osrm_foot&route=${dlat}%2C${dlon}%3B${lat}%2C${lon}`
-        : `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=17/${lat}/${lon}`,
     };
   }
 
@@ -989,6 +1039,8 @@ class TransportsIdfCard extends HTMLElement {
     this._blocs.clear();
     for (const c of this._cartes.values()) c.carte?.remove();
     this._cartes.clear();
+    this._observateur?.disconnect();
+    this._observateur = null;
     this._squelette = true;
   }
 
@@ -1068,7 +1120,7 @@ class TransportsIdfCard extends HTMLElement {
       this._maj(b.entete, `<span class="chevron">${replie ? "▸" : "▾"}</span><span class="arret">${echapper(a.arret || a.friendly_name)}</span>${indispo}${marche}`);
       if (planOuvert) {
         this._donneesCartes.set(plan.cle, plan.donnees);
-        this._maj(b.plan, `<div class="carte-l" data-carte="${echapper(plan.cle)}"></div><a href="${echapper(plan.pied)}" target="_blank" rel="noopener">Itinéraire à pied ↗</a>`);
+        this._maj(b.plan, `<div class="carte-l" data-carte="${echapper(plan.cle)}"></div>`);
         b.plan.hidden = false;
       } else {
         this._maj(b.plan, "");
@@ -1241,16 +1293,15 @@ class TransportsIdfCard extends HTMLElement {
       .carte-l { width: 100%; }
       .carte-int { position: relative; z-index: 0; height: 190px; border-radius: 8px; overflow: hidden; background: var(--ti-fond); font-size: .8em; color: var(--secondary-text-color); }
       .carte-marche .carte-int { height: 180px; }
-      .etapes li.carte-marche { grid-template-columns: 4.2em minmax(0, 1fr); }
+      .etapes li.carte-marche { grid-template-columns: minmax(0, 1fr); }
       .carte-marche .plan { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-      .carte-int.sombre .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.92) contrast(.88) saturate(.55); }
+      .carte-int.attenue .leaflet-tile-pane { filter: brightness(.82) contrast(.95) saturate(.9); }
       .plan .carte-int { height: 210px; }
       .plan-ligne .carte-int { height: 260px; }
       .voir-carte { color: var(--primary-color); font-size: .9em; cursor: pointer; margin-top: 6px; width: fit-content; }
       .etapes li.voir-carte { color: var(--primary-color); }
       .carte-globale .carte-int { height: 240px; }
-      .etapes li.carte-globale { grid-template-columns: minmax(0, 1fr); }
-      .etapes li.carte-globale > span:first-child { display: none; }
+
       .carte-int .leaflet-control-attribution { font-size: 9px; line-height: 1.3; background: rgba(255,255,255,.6); padding: 0 4px; }
       .carte-int .leaflet-control-attribution a { color: inherit; }
       .carte-int .leaflet-bar a { width: 26px; height: 26px; line-height: 26px; }
@@ -1275,7 +1326,8 @@ class TransportsIdfCard extends HTMLElement {
       .logos .logo { font-size: .8em; }
       .logos .logo.f-tram { min-width: 2.75em; padding: 0 2px; }
       .logos .logo.f-bus { min-width: 2.6em; }
-      .logos .logo.tres-long { grid-column: span 2; }
+      /* Noms de bus longs (39-14, N145…) : texte réduit pour rester dans une case, alignés sur les autres colonnes. */
+      .logos .logo.tres-long { font-size: .62em; min-width: 3.6em; padding: 0 3px; letter-spacing: -.02em; }
       .detail-tete { display: flex; align-items: center; gap: 8px; }
       .detail-ligne { border-top: 1px solid var(--ti-trait); padding-top: 6px; display: flex; flex-direction: column; gap: 2px; }
 
