@@ -3,6 +3,13 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.10.8] - 2026-11-09
+
+### Corrigé
+
+- Plan d'une ligne : formes redécoupées aux arrêts, un seul tracé par portion entre deux arrêts voisins (plus de doublons ni de bouts sans arrêt) ; calcul hors de la boucle de Home Assistant.
+- Carte d'un trajet : si le tracé PRIM reste douteux, plus court chemin sur le plan de la ligne, d'arrêt desservi en arrêt desservi.
+
 ## [0.10.7] - 2026-11-09
 
 *Livraison non fonctionnelle (plans épais et dédoublés, une forme par variante de parcours) : version restée sur `dev`, non publiée sur `master`.*
