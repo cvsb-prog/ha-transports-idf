@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "transports_idf"
 NOM = "Transports IDF"
-VERSION = "0.9.5"
+VERSION = "0.10.0"
 
 BASE_URL = "https://prim.iledefrance-mobilites.fr/marketplace"
 NAVITIA = f"{BASE_URL}/v2/navitia"
@@ -38,6 +38,7 @@ DEFAUTS = {
 # Sous-entrées
 SOUS_ARRET = "arret"
 SOUS_TRAJET = "trajet"
+SOUS_LIGNE = "ligne"  # ligne d'intérêt (panneau info trafic)
 
 # Données d'un arrêt
 A_ZONE_ID = "zone_id"  # stop_area Navitia

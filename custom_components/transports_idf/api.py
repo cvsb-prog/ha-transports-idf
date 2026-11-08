@@ -134,6 +134,15 @@ class ClientPrim:
         params = [("count", "1000"), ("depth", "1"), ("forbidden_uris[]", "physical_mode:Bus")]
         return analyser_lignes(await self._get(f"{NAVITIA}/lines", params))
 
+    async def plan_ligne(self, ligne_id: str) -> dict[str, Any]:
+        """Tracé de la ligne et ses arrêts (carte d'une ligne dans l'info trafic)."""
+        base = f"{NAVITIA}/lines/{quote(ligne_id)}"
+        ligne, arrets = await asyncio.gather(
+            self._get(base, [("disable_geojson", "false")]),
+            self._get(f"{base}/stop_areas", [("count", "400"), ("disable_geojson", "true")]),
+        )
+        return analyser_plan_ligne(ligne, arrets)
+
     async def chercher_lignes(self, texte: str) -> list[dict[str, Any]]:
         donnees = await self._get(f"{NAVITIA}/pt_objects", [("q", texte), ("type[]", "line"), ("count", "20")])
         lignes = [o.get("line") for o in (donnees or {}).get("pt_objects", []) if o.get("embedded_type") == "line"]
@@ -293,6 +302,47 @@ def analyser_lieux(donnees: Any) -> list[dict[str, Any]]:
 
 
 ORDRE_GROUPES = ["RER", "Train", "Métro", "Tram", "Bus"]
+
+
+def _alleger(points: list[list[float]], maxi: int) -> list[list[float]]:
+    if len(points) <= maxi:
+        return points
+    pas = math.ceil(len(points) / maxi)
+    return points[::pas] + [points[-1]]
+
+
+def analyser_plan_ligne(ligne: Any, arrets: Any) -> dict[str, Any]:
+    """GeoJSON (Multi)LineString de la ligne → [[[lat, lon], …], …] allégé ; arrêts → nom, position."""
+    objet = next(iter((ligne or {}).get("lines") or []), {}) or {}
+    geo = objet.get("geojson") or {}
+    morceaux = geo.get("coordinates") or []
+    if geo.get("type") == "LineString":
+        morceaux = [morceaux]
+    traces = []
+    for m in morceaux:
+        pts = []
+        for c in m or []:
+            try:
+                pts.append([round(float(c[1]), 5), round(float(c[0]), 5)])
+            except (IndexError, TypeError, ValueError):
+                continue
+        if len(pts) > 1:
+            traces.append(pts)
+    total = sum(len(t) for t in traces) or 1
+    traces = [_alleger(t, max(20, round(1500 * len(t) / total))) for t in traces]
+    sortie_arrets = []
+    for a in (arrets or {}).get("stop_areas", []) or []:
+        c = a.get("coord") or {}
+        try:
+            sortie_arrets.append({"id": a.get("id"), "nom": a.get("name"), "lat": float(c["lat"]), "lon": float(c["lon"])})
+        except (KeyError, TypeError, ValueError):
+            continue
+    return {"traces": traces, "arrets": sortie_arrets, "couleur": f"#{objet['color']}" if objet.get("color") else None}
+
+
+def titre_ligne(l: dict[str, Any]) -> str:
+    """« Bus 39-14 », « RER C », « Métro 13 »… (titre d'une ligne d'intérêt)."""
+    return f"{l.get('mode') or ''} {l.get('nom') or l.get('code') or ''}".strip() or str(l.get("id"))
 
 
 def normaliser(texte: Any) -> str:
@@ -573,6 +623,7 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                         **{k: section[k] for k in ("nom", "code", "mode", "couleur", "couleur_texte", "direction", "de", "vers", "ligne_id", "de_point", "vers_point", "route_id")},
                         "bouts": sorted(bouts),
                         "arrets": sorted(arrets),
+                        "trace": _trace(s, 120),
                         "depart_brut": s.get("departure_date_time"),
                         "mission": _mission(info),
                         "depart": heure_navitia(s.get("departure_date_time")),
@@ -862,7 +913,11 @@ def messages_affiches(perts: list[dict[str, Any]], ignorer_info: bool = True) ->
         cle = (normaliser(p.get("titre")), normaliser(p.get("message")))
         if cle in vus:
             continue
-        vus[cle] = {"id": p.get("id"), "titre": p.get("titre"), "message": p.get("message") if p.get("message") != p.get("titre") else "", "niveau": niveau, "fin": p.get("fin")}
+        touches = sorted({c[2:] for c in (p.get("troncon") or []) + (p.get("arrets") or []) if c.startswith("n:")})
+        vus[cle] = {
+            "id": p.get("id"), "titre": p.get("titre"), "message": p.get("message") if p.get("message") != p.get("titre") else "",
+            "niveau": niveau, "fin": p.get("fin"), "arrets_touches": touches,
+        }
     return sorted(vus.values(), key=lambda m: ordre.get(m["niveau"], 3))
 
 

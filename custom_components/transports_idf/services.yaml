@@ -34,3 +34,10 @@ itineraire:
           options:
             - depart
             - arrivee
+
+plan_ligne:
+  fields:
+    ligne_id:
+      required: true
+      selector:
+        text:

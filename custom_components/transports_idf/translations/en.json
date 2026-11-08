@@ -34,8 +34,7 @@
       "init": {
         "title": "Transports IDF",
         "menu_options": {
-          "reglages": "Réglages généraux",
-          "lignes": "Lignes d'intérêt (info trafic)"
+          "reglages": "Réglages généraux"
         }
       },
       "reglages": {
@@ -55,20 +54,6 @@
           "marge": "Un passage est « atteignable » si son départ est dans au moins (temps de marche + marge), « en se pressant » s'il reste au moins le temps de marche, sinon « trop tard ».",
           "ignorer_information": "Les trajets ne passent en « perturbé » que pour un vrai impact (interruption, retards, déviation…).",
           "cle_carto": "Vide : fond OpenStreetMap (assombri avec le thème sombre). Avec une clé gratuite demandée sur carto.com/basemaps/apikey : fond CARTO, plus sobre, clair ou sombre selon le thème."
-        }
-      },
-      "lignes": {
-        "title": "Lignes d'intérêt",
-        "description": "Lignes ajoutées au panneau info trafic, en plus des RER, Transilien, métros et trams (et des lignes de tes trajets et arrêts, ajoutées d'office). Décoche pour retirer ; tape un numéro ou un nom pour en ajouter.",
-        "data": {
-          "garder": "Lignes suivies",
-          "recherche": "Ajouter une ligne (ex. 192, Noctilien N21…)"
-        }
-      },
-      "lignes_choix": {
-        "title": "Ajouter des lignes",
-        "data": {
-          "lignes": "Lignes trouvées"
         }
       }
     },
@@ -254,6 +239,37 @@
         "injoignable": "PRIM ne répond pas. Réessaie dans un instant.",
         "reconfigure_successful": "Trajet mis à jour."
       }
+    },
+    "ligne": {
+      "initiate_flow": {
+        "user": "Ajouter une ligne"
+      },
+      "entry_type": "Ligne d'intérêt",
+      "step": {
+        "user": {
+          "title": "Ajouter une ligne d'intérêt",
+          "description": "Une ligne de plus dans le panneau info trafic (en plus des RER, trains, métros et trams).",
+          "data": {
+            "recherche": "Ligne (numéro ou nom)"
+          },
+          "data_description": {
+            "recherche": "Ex. 192, Noctilien N21, T6."
+          }
+        },
+        "choix": {
+          "title": "Choisir la ligne",
+          "data": {
+            "ligne": "Ligne"
+          }
+        }
+      },
+      "error": {
+        "injoignable": "PRIM ne répond pas. Réessaie dans un instant.",
+        "aucune_ligne": "Aucune ligne trouvée."
+      },
+      "abort": {
+        "deja_suivie": "Cette ligne est déjà suivie."
+      }
     }
   },
   "entity": {
@@ -315,6 +331,16 @@
         "date": {
           "name": "Date",
           "description": "Jour du trajet. Par défaut : aujourd'hui (demain si l'heure est passée)."
+        }
+      }
+    },
+    "plan_ligne": {
+      "name": "Plan d'une ligne",
+      "description": "Tracé et arrêts d'une ligne (carte de la ligne dans l'info trafic).",
+      "fields": {
+        "ligne_id": {
+          "name": "Ligne",
+          "description": "Identifiant PRIM de la ligne (line:IDFM:…)."
         }
       }
     }
