@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "transports_idf"
 NOM = "Transports IDF"
-VERSION = "0.10.0"
+VERSION = "0.10.1"
 
 BASE_URL = "https://prim.iledefrance-mobilites.fr/marketplace"
 NAVITIA = f"{BASE_URL}/v2/navitia"
