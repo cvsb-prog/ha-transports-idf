@@ -3,7 +3,7 @@
 Intégration Home Assistant pour les transports en commun d'Île-de-France, à partir des API
 [PRIM](https://prim.iledefrance-mobilites.fr/) d'Île-de-France Mobilités, avec sa carte de tableau de bord.
 
-Version actuelle : **0.9.5** (voir le [CHANGELOG](CHANGELOG.md)).
+Version actuelle : **0.10.0** (voir le [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctionnalités
 
@@ -11,12 +11,13 @@ Version actuelle : **0.9.5** (voir le [CHANGELOG](CHANGELOG.md)).
 - **Trajets** : itinéraire habituel, capteur binaire « perturbation » sur les lignes empruntées.
 - Événement `transports_idf_alerte` pour bâtir ses propres alertes de trajet.
 - Service **Partir maintenant** : itinéraires d'un trajet au départ de maintenant, marche comprise.
-- **Réglages** : zone de départ, marge « en se pressant », rafraîchissement jour / nuit. Lignes d'intérêt pour l'info trafic.
+- **Réglages** : zone de départ, marge « en se pressant », rafraîchissement jour / nuit.
+- **Lignes d'intérêt** : sous-entrées « Ligne », suivies dans l'info trafic.
 - **Position dans la rame** et **sortie conseillée** (jeux de données RATP / IDFM livrés, mis à jour chaque mois).
 - Voie et mission des RER, panneau de sortie à l'arrivée.
 - **Trajet nominal** du jour, **jours du trajet** et **détour** avant les transports.
 - Messages de perturbation filtrés sur la portion empruntée, le sens et l'heure du trajet ; jours fériés.
-- Carte du trajet à pied (Leaflet).
+- Cartes : trajet à pied, trajet complet, plan d'une ligne.
 
 ## Carte de tableau de bord
 
@@ -31,7 +32,7 @@ Installation manuelle (HACS prévu une fois l'intégration mûre) :
 2. Redémarrer Home Assistant.
 3. Paramètres → Appareils et services → Ajouter une intégration → **Transports IDF**, puis coller un jeton PRIM
    (compte gratuit sur prim.iledefrance-mobilites.fr ; le jeton n'est affiché qu'à sa création).
-4. Ajouter des arrêts et des trajets depuis la page de l'intégration.
+4. Ajouter des arrêts, des trajets et des lignes depuis la page de l'intégration.
 
 Mise à jour : remplacer le dossier, redémarrer, actualiser le navigateur. Réglages, arrêts et trajets sont conservés.
 

@@ -5,11 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from pathlib import Path
+from types import MappingProxyType
+from typing import Any
 
 import voluptuous as vol
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
-from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState, ConfigSubentry
 from homeassistant.const import Platform
 from homeassistant.core import (
     HomeAssistant,
@@ -24,8 +26,15 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
 
-from .api import ClientPrim, ErreurPrim
-from .const import CONF_JETON, CONF_ZONE, DOMAIN, VERSION
+from .api import ClientPrim, ErreurPrim, titre_ligne
+from .const import (
+    CONF_JETON,
+    CONF_ZONE,
+    DOMAIN,
+    OPT_LIGNES_INTERET,
+    SOUS_LIGNE,
+    VERSION,
+)
 from .coordinator import (
     InfoTraficCoordinator,
     Itineraires,
@@ -69,6 +78,7 @@ async def _partir_maintenant(appel: ServiceCall) -> ServiceResponse:
 
 
 SCHEMA_LIEU = vol.Schema({vol.Required("texte"): cv.string})
+SCHEMA_PLAN = vol.Schema({vol.Required("ligne_id"): cv.string})
 SCHEMA_ITINERAIRE = vol.Schema(
     {
         vol.Required("arrivee"): cv.string,
@@ -98,6 +108,26 @@ async def _rechercher_lieu(appel: ServiceCall) -> ServiceResponse:
     except ErreurPrim as err:
         raise HomeAssistantError(f"Recherche PRIM impossible : {err}") from err
     return {"lieux": lieux[:8]}
+
+
+_PLANS: dict[str, tuple[datetime, dict[str, Any]]] = {}
+
+
+async def _plan_ligne(appel: ServiceCall) -> ServiceResponse:
+    """Tracé et arrêts d'une ligne (carte de la ligne dans l'info trafic), gardés une journée."""
+    entree = _entree_chargee(appel.hass)
+    ligne_id = appel.data["ligne_id"]
+    deja = _PLANS.get(ligne_id)
+    if deja and dt_util.utcnow() - deja[0] < timedelta(days=1):
+        return deja[1]
+    try:
+        plan = await entree.runtime_data.client.plan_ligne(ligne_id)
+    except ErreurPrim as err:
+        raise HomeAssistantError(f"Plan de la ligne indisponible : {err}") from err
+    if len(_PLANS) > 50:
+        _PLANS.clear()
+    _PLANS[ligne_id] = (dt_util.utcnow(), plan)
+    return plan
 
 
 async def _itineraire(appel: ServiceCall) -> ServiceResponse:
@@ -141,6 +171,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     )
     hass.services.async_register(DOMAIN, "rechercher_lieu", _rechercher_lieu, schema=SCHEMA_LIEU, supports_response=SupportsResponse.ONLY)
     hass.services.async_register(DOMAIN, "itineraire", _itineraire, schema=SCHEMA_ITINERAIRE, supports_response=SupportsResponse.ONLY)
+    hass.services.async_register(DOMAIN, "plan_ligne", _plan_ligne, schema=SCHEMA_PLAN, supports_response=SupportsResponse.ONLY)
     if "frontend" not in hass.config.components or getattr(hass, "http", None) is None:
         return True
     dossier = Path(__file__).parent
@@ -155,7 +186,23 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+def _migrer_lignes(hass: HomeAssistant, entry: TransportsConfigEntry) -> None:
+    """≤ 0.9 : lignes d'intérêt dans les options → une sous-entrée « ligne » chacune (comme arrêts et trajets)."""
+    anciennes = entry.options.get(OPT_LIGNES_INTERET)
+    if not anciennes:
+        return
+    deja = {s.unique_id for s in entry.subentries.values() if s.subentry_type == SOUS_LIGNE}
+    for l in anciennes:
+        if l.get("id") and l["id"] not in deja:
+            hass.config_entries.async_add_subentry(
+                entry,
+                ConfigSubentry(data=MappingProxyType(dict(l)), subentry_type=SOUS_LIGNE, title=titre_ligne(l), unique_id=l["id"]),
+            )
+    hass.config_entries.async_update_entry(entry, options={k: v for k, v in entry.options.items() if k != OPT_LIGNES_INTERET})
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: TransportsConfigEntry) -> bool:
+    _migrer_lignes(hass, entry)  # avant l'écoute des modifications : pas de rechargement en boucle
     client = ClientPrim(async_get_clientsession(hass), entry.data[CONF_JETON])
     calcul = Itineraires(hass, client)
     passages = PassagesCoordinator(hass, entry, client)

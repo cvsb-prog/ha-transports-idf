@@ -48,6 +48,7 @@ from .const import (
     OPT_LIGNES_INTERET,
     OPT_MARGE,
     SOUS_ARRET,
+    SOUS_LIGNE,
     SOUS_TRAJET,
     T_DEPART_HABITUEL,
     T_DUREE,
@@ -418,8 +419,12 @@ class InfoTraficCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
     def _lignes_suivies(self) -> dict[str, dict[str, Any]]:
         """Lignes ajoutées par l'utilisateur, ou utilisées par ses trajets et ses arrêts."""
         sortie: dict[str, dict[str, Any]] = {}
-        for l in option(self.config_entry, OPT_LIGNES_INTERET) or []:
-            sortie[l["id"]] = {**l, "interet": True}
+        lignes_interet = list(option(self.config_entry, OPT_LIGNES_INTERET) or []) + [
+            dict(s.data) for s in self.config_entry.subentries.values() if s.subentry_type == SOUS_LIGNE
+        ]
+        for l in lignes_interet:
+            if l.get("id"):
+                sortie[l["id"]] = {**l, "interet": True}
         for s in self.config_entry.subentries.values():
             if s.subentry_type == SOUS_TRAJET:
                 for sec in s.data.get(T_SECTIONS, []):

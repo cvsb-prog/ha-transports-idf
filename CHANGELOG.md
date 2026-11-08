@@ -3,6 +3,19 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.10.0] - 2026-11-08
+
+### Ajouté
+
+- Sous-entrée « Ligne » (« Ajouter une ligne ») ; les anciennes lignes d'intérêt sont reprises automatiquement.
+- « Voir le trajet sur la carte » et « Voir le plan de la ligne » (service plan_ligne).
+
+### Modifié
+
+- Durées d'1 h ou plus affichées « 1 h 06 ».
+- Info trafic en tableau aligné ; titre « Arrêts préférés ».
+- Clic sur le temps de marche pour la carte (plus de logos 🗺️) ; une seule croix dans la recherche.
+
 ## [0.9.5] - 2026-11-07
 
 ### Modifié
