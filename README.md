@@ -3,7 +3,7 @@
 Intégration Home Assistant pour les transports en commun d'Île-de-France, à partir des API
 [PRIM](https://prim.iledefrance-mobilites.fr/) d'Île-de-France Mobilités, avec sa carte de tableau de bord.
 
-Version actuelle : **0.10.7** (voir le [CHANGELOG](CHANGELOG.md)).
+Version actuelle : **0.10.8** (voir le [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctionnalités
 

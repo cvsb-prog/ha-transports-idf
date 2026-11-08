@@ -5,7 +5,7 @@
  * à l'intérieur, propositions et alertes sont repliées ; les gares se replient d'un clic.
  * Passages : vert = atteignable (départ ≥ marche + marge), orange = en se pressant, gris = trop tard.
  */
-const VERSION = "0.10.7";
+const VERSION = "0.10.8";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },

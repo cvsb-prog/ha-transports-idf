@@ -6,6 +6,7 @@ Les fonctions `analyser_*` sont pures (sans réseau) pour être testées à part
 from __future__ import annotations
 
 import asyncio
+import heapq
 import html
 import logging
 import math
@@ -40,7 +41,7 @@ class ErreurQuota(ErreurPrim):
     """Quota atteint (429)."""
 
 
-_TRACES_LIGNES: dict[str, tuple[datetime, dict[str, Any]]] = {}
+_PLANS_COMPLETS: dict[str, tuple[datetime, dict[str, Any]]] = {}
 
 
 class ClientPrim:
@@ -130,29 +131,54 @@ class ClientPrim:
         await self._reprendre_traces(itineraires)
         return itineraires
 
-    async def traces_ligne(self, ligne_id: str) -> dict[str, Any]:
-        """Tracé (branches) d'une ligne, gardé une journée."""
-        deja = _TRACES_LIGNES.get(ligne_id)
+    async def plan_complet(self, ligne_id: str) -> dict[str, Any]:
+        """Plan d'une ligne (tracé par tronçons entre arrêts voisins, arrêts, couleur) et son graphe, gardés une journée."""
+        deja = _PLANS_COMPLETS.get(ligne_id)
         if deja and datetime.now(UTC) - deja[0] < timedelta(days=1):
             return deja[1]
-        plan = analyser_plan_ligne(await self._ligne_avec_traces(ligne_id), None)
-        if len(_TRACES_LIGNES) > 60:
-            _TRACES_LIGNES.clear()
-        _TRACES_LIGNES[ligne_id] = (datetime.now(UTC), plan)
+        base = f"{NAVITIA}/lines/{quote(ligne_id)}"
+        ligne, arrets = await asyncio.gather(
+            self._ligne_avec_traces(ligne_id),
+            self._get(f"{base}/stop_areas", [("count", "400"), ("disable_geojson", "true")]),
+        )
+        brut = analyser_plan_ligne(ligne, arrets, alleger=False)
+        noeuds = [[a["lat"], a["lon"]] for a in brut["arrets"]]
+        troncons: dict[tuple[int, int], list[list[float]]] = {}
+        if brut["traces"] and len(noeuds) > 1:
+            troncons = await asyncio.get_running_loop().run_in_executor(None, reseau_ligne, brut["traces"], noeuds)
+        if troncons:
+            traces = list(troncons.values())
+        else:  # pas d'arrêts ou formes inexploitables : on garde les formes telles quelles
+            traces = brut["traces"]
+        plan = {
+            **brut,
+            "traces": _alleger_tout(traces, 2500),
+            "graphe": {"noeuds": noeuds, "troncons": [[a, b, t] for (a, b), t in troncons.items()]},
+        }
+        _LOGGER.debug("Plan de %s : %d formes → %d tronçons, %d arrêts", ligne_id, len(brut["traces"]), len(troncons), len(noeuds))
+        if len(_PLANS_COMPLETS) > 40:
+            _PLANS_COMPLETS.clear()
+        _PLANS_COMPLETS[ligne_id] = (datetime.now(UTC), plan)
         return plan
 
+    async def plan_ligne(self, ligne_id: str) -> dict[str, Any]:
+        """Tracé de la ligne et ses arrêts (carte d'une ligne dans l'info trafic)."""
+        plan = await self.plan_complet(ligne_id)
+        return {k: v for k, v in plan.items() if k != "graphe"}
+
     async def _reprendre_traces(self, itineraires: list[dict[str, Any]]) -> None:
-        """Étapes dont le tracé PRIM est invraisemblable : on prend le morceau du tracé de la ligne."""
+        """Étapes dont le tracé PRIM est invraisemblable : on suit le plan de la ligne d'arrêt en arrêt."""
         for it in itineraires:
             for e in it.get("etapes", []):
                 if e.get("type") != "transport" or not e.get("trace_douteux") or not e.get("ligne_id"):
                     continue
                 arrets = [[p[1], p[2]] for p in e.get("points_arret") or []]
                 try:
-                    morceau = trace_par_plan(await self.traces_ligne(e["ligne_id"]), arrets)
+                    plan = await self.plan_complet(e["ligne_id"])
                 except Exception as err:  # noqa: BLE001 — le tracé n'est qu'un plus
                     _LOGGER.debug("Tracé de %s indisponible : %s", e["ligne_id"], err)
                     continue
+                morceau = chemin_graphe(plan.get("graphe") or {}, arrets)
                 if morceau:
                     e["trace"] = _alleger(morceau, 120)
                     e["trace_douteux"] = False
@@ -165,17 +191,6 @@ class ClientPrim:
         """Toutes les lignes hors bus (RER, Transilien, métro, tram…), avec code et couleurs."""
         params = [("count", "1000"), ("depth", "1"), ("forbidden_uris[]", "physical_mode:Bus")]
         return analyser_lignes(await self._get(f"{NAVITIA}/lines", params))
-
-    async def plan_ligne(self, ligne_id: str) -> dict[str, Any]:
-        """Tracé de la ligne et ses arrêts (carte d'une ligne dans l'info trafic)."""
-        base = f"{NAVITIA}/lines/{quote(ligne_id)}"
-        ligne, arrets = await asyncio.gather(
-            self._ligne_avec_traces(ligne_id),
-            self._get(f"{base}/stop_areas", [("count", "400"), ("disable_geojson", "true")]),
-        )
-        plan = analyser_plan_ligne(ligne, arrets)
-        _LOGGER.debug("Plan de %s : %d tracés, %d arrêts", ligne_id, len(plan["traces"]), len(plan["arrets"]))
-        return plan
 
     async def _ligne_avec_traces(self, ligne_id: str) -> dict[str, Any]:
         """La ligne avec son tracé ; à défaut, les tracés de ses parcours."""
@@ -381,6 +396,14 @@ def _alleger(points: list[list[float]], maxi: int) -> list[list[float]]:
     return points[::pas] + [points[-1]]
 
 
+def _alleger_tout(traces: list[list[list[float]]], maxi: int) -> list[list[list[float]]]:
+    """Allège un ensemble de tracés à environ maxi points en tout."""
+    total = sum(len(t) for t in traces) or 1
+    if total <= maxi:
+        return traces
+    return [_alleger(t, max(4, round(maxi * len(t) / total))) for t in traces]
+
+
 def _traces_geojson(geo: Any) -> list[list[list[float]]]:
     """GeoJSON LineString / MultiLineString [lon, lat] → [[[lat, lon], …], …]."""
     geo = geo or {}
@@ -400,16 +423,16 @@ def _traces_geojson(geo: Any) -> list[list[list[float]]]:
     return traces
 
 
-def analyser_plan_ligne(ligne: Any, arrets: Any) -> dict[str, Any]:
-    """GeoJSON (Multi)LineString de la ligne → [[[lat, lon], …], …] allégé ; arrêts → nom, position."""
+def analyser_plan_ligne(ligne: Any, arrets: Any, alleger: bool = True) -> dict[str, Any]:
+    """GeoJSON (Multi)LineString de la ligne → [[[lat, lon], …], …] (allégé) ; arrêts → nom, position."""
     objet = next(iter((ligne or {}).get("lines") or []), {}) or {}
     traces = _traces_geojson(objet.get("geojson"))
     if not traces:
         # Pas de tracé pour la ligne : on prend ceux de ses parcours (un par sens / branche).
         for route in (ligne or {}).get("routes", []) or []:
             traces += _traces_geojson(route.get("geojson"))
-    total = sum(len(t) for t in traces) or 1
-    traces = [_alleger(t, max(20, round(1500 * len(t) / total))) for t in traces]
+    if alleger:
+        traces = _alleger_tout(traces, 1500)
     sortie_arrets = []
     for a in (arrets or {}).get("stop_areas", []) or []:
         c = a.get("coord") or {}
@@ -695,25 +718,121 @@ def caler_trace(points: list[list[float]], arrets: list[list[float]], rayon: flo
     return sortie, douteux
 
 
-def trace_par_plan(plan: dict[str, Any], arrets: list[list[float]]) -> list[list[float]] | None:
-    """Morceau du tracé de la ligne (branche qui passe par tous les arrêts) entre le premier et le dernier arrêt."""
-    if len(arrets) < 2:
+def reseau_ligne(formes: list[list[list[float]]], arrets: list[list[float]], rayon: float = 250) -> dict[tuple[int, int], list[list[float]]]:
+    """Formes d'une ligne + ses arrêts → un tracé par paire d'arrêts voisins {(i, j) : [[lat, lon], …]}.
+
+    Les formes open data (une par variante de parcours) se superposent, et certaines
+    font des détours absurdes (aller-retour sur une autre branche…). Chaque forme est découpée aux
+    arrêts qu'elle frôle ; entre deux arrêts consécutifs, on garde le morceau le plus
+    court de toutes les formes, s'il est vraisemblable. Plus de doublons ni de bouts
+    qui ne mènent à aucun arrêt. Calcul lourd : à lancer hors de la boucle d'événements.
+    """
+    case = 0.01
+    grille: dict[tuple[int, int], list[int]] = {}
+    for k, a in enumerate(arrets):
+        grille.setdefault((int(a[0] / case), int(a[1] / case)), []).append(k)
+
+    def voisins(p: list[float]) -> list[int]:
+        gx, gy = int(p[0] / case), int(p[1] / case)
+        return [k for dx in (-1, 0, 1) for dy in (-1, 0, 1) for k in grille.get((gx + dx, gy + dy), ())]
+
+    # Rayon propre à chaque arrêt : une grande gare (Montparnasse…) peut être placée à 400-500 m des voies.
+    rayons = [rayon] * len(arrets)
+    pres = set()
+    for forme in formes:
+        for p in forme:
+            for k in voisins(p):
+                if _metres(p, arrets[k]) < rayon:
+                    pres.add(k)
+    for k in set(range(len(arrets))) - pres:
+        d = min((_metres(p, arrets[k]) for forme in formes for p in forme), default=math.inf)
+        rayons[k] = min(700.0, max(rayon, 1.3 * d + 30))
+
+    troncons: dict[tuple[int, int], list[list[float]]] = {}
+    longueurs: dict[tuple[int, int], float] = {}
+    for forme in formes:
+        # Passages de la forme près des arrêts : (indice du point le plus proche, arrêt).
+        en_cours: dict[int, tuple[float, int, int]] = {}  # arrêt → (distance mini, indice, dernier indice vu)
+        passages: list[tuple[int, int]] = []
+        for idx, p in enumerate(forme):
+            for k in voisins(p):
+                d = _metres(p, arrets[k])
+                if d >= rayons[k]:
+                    continue
+                cur = en_cours.get(k)
+                if cur is not None and idx - cur[2] > 1:
+                    passages.append((cur[1], k))
+                    cur = None
+                en_cours[k] = (d, idx, idx) if cur is None or d < cur[0] else (cur[0], cur[1], idx)
+            for k in [k for k, c in en_cours.items() if c[2] < idx]:
+                passages.append((en_cours.pop(k)[1], k))
+        passages += [(c[1], k) for k, c in en_cours.items()]
+        passages.sort()
+        for (i, a), (j, b) in zip(passages, passages[1:]):
+            if a == b or j <= i:
+                continue
+            morceau = sans_boucles(forme[i : j + 1])
+            long = _longueur(morceau)
+            if long > 1.6 * _metres(arrets[a], arrets[b]) + 400:
+                continue
+            cle = (min(a, b), max(a, b))
+            if cle not in longueurs or long < longueurs[cle]:
+                troncons[cle] = morceau if a < b else morceau[::-1]
+                longueurs[cle] = long
+    return troncons
+
+
+def chemin_graphe(graphe: dict[str, Any], arrets: list[list[float]], rayon: float = 400) -> list[list[float]] | None:
+    """Tracé d'une étape en suivant le plan de la ligne (tronçons) d'arrêt desservi en arrêt desservi."""
+    noeuds = graphe.get("noeuds") or []
+    if len(arrets) < 2 or not noeuds:
         return None
-    meilleur = None
-    for branche in (plan or {}).get("traces") or []:
-        if len(branche) < 2:
+    voisins: dict[int, list[tuple[int, float, list[list[float]]]]] = {}
+    for a, b, t in graphe.get("troncons") or []:
+        long = _longueur(t)
+        voisins.setdefault(a, []).append((b, long, t))
+        voisins.setdefault(b, []).append((a, long, t[::-1]))
+
+    def noeud(p: list[float]) -> int | None:
+        k = min(range(len(noeuds)), key=lambda i: _metres(noeuds[i], p))
+        return k if _metres(noeuds[k], p) < rayon else None
+
+    def plus_court(depart: int, arrivee: int) -> list[list[float]] | None:
+        meilleur = {depart: 0.0}
+        file: list[tuple[float, int]] = [(0.0, depart)]
+        venu: dict[int, tuple[int, list[list[float]]]] = {}
+        while file:
+            d, n = heapq.heappop(file)
+            if n == arrivee:
+                break
+            if d > meilleur.get(n, math.inf):
+                continue
+            for v, long, t in voisins.get(n, []):
+                if d + long < meilleur.get(v, math.inf):
+                    meilleur[v] = d + long
+                    venu[v] = (n, t)
+                    heapq.heappush(file, (d + long, v))
+        if arrivee not in venu:
+            return None
+        morceaux = []
+        n = arrivee
+        while n != depart:
+            n, t = venu[n][0], venu[n][1]
+            morceaux.append(t)
+        return [p for t in reversed(morceaux) for p in t]
+
+    sortie: list[list[float]] = []
+    suite = [n for n in (noeud(a) for a in arrets)]
+    if any(n is None for n in suite):
+        return None
+    for a, b in zip(suite, suite[1:]):
+        if a == b:
             continue
-        ecart = max(min(_metres(p, a) for p in branche) for a in arrets)
-        if ecart < 400 and (meilleur is None or ecart < meilleur[0]):
-            meilleur = (ecart, branche)
-    if meilleur is None:
-        return None
-    branche = meilleur[1]
-    i = min(range(len(branche)), key=lambda k: _metres(branche[k], arrets[0]))
-    j = min(range(len(branche)), key=lambda k: _metres(branche[k], arrets[-1]))
-    morceau = branche[i : j + 1] if i <= j else branche[j : i + 1][::-1]
-    morceau = sans_boucles(morceau)
-    return morceau if len(morceau) >= 2 else None
+        morceau = plus_court(a, b)
+        if not morceau:
+            return None
+        sortie.extend(morceau)
+    return sortie if len(sortie) > 1 else None
 
 
 def _trace(section: dict[str, Any], maxi: int = 150, arrets: list[list[float]] | None = None) -> tuple[list[list[float]], bool]:
