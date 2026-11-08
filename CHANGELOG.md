@@ -3,6 +3,39 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.10.7] - 2026-11-09
+
+*Livraison non fonctionnelle (plans épais et dédoublés, une forme par variante de parcours) : version restée sur `dev`, non publiée sur `master`.*
+
+### Ajouté
+
+- Plan d'une ligne : tracé du jeu de données open data IDFM « Tracés des lignes de transport en commun » (sans clé, seul le numéro de ligne est envoyé) ; sert aussi de secours aux cartes de trajet.
+
+## [0.10.6] - 2026-11-09
+
+*Archive non conservée : son contenu est inclus dans la 0.10.7.*
+
+### Corrigé
+
+- Recalage du tracé d'une section analysé sur de vraies réponses PRIM : entre deux arrêts consécutifs, le plus court morceau du tracé qui les relie, où qu'il soit.
+- Constat : PRIM ne fournit aucun tracé de ligne ni de parcours.
+
+## [0.10.5] - 2026-11-09
+
+*Archive non conservée : son contenu est inclus dans la 0.10.7.*
+
+### Corrigé
+
+- Détection des allers-retours d'un tracé par segments (tracés PRIM peu denses).
+
+## [0.10.4] - 2026-11-09
+
+*Archive non conservée : son contenu est inclus dans la 0.10.7.*
+
+### Ajouté
+
+- Plan d'une ligne : tracés des parcours de la ligne quand PRIM ne fournit pas celui de la ligne.
+
 ## [0.10.3] - 2026-11-09
 
 *Livraison non fonctionnelle (tracé toujours faux sur une ligne de RER à branches) : version restée sur `dev`, non publiée sur `master`.*
