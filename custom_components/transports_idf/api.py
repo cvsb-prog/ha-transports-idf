@@ -40,6 +40,9 @@ class ErreurQuota(ErreurPrim):
     """Quota atteint (429)."""
 
 
+_TRACES_LIGNES: dict[str, tuple[datetime, dict[str, Any]]] = {}
+
+
 class ClientPrim:
     """Accès aux API PRIM avec un jeton."""
 
@@ -123,7 +126,37 @@ class ClientPrim:
             params += [("datetime", quand.strftime("%Y%m%dT%H%M%S")), ("datetime_represents", represente)]
         params += [("forbidden_uris[]", i) for i in (interdits or [])]
         params += [("allowed_id[]", i) for i in (autorises or [])]
-        return analyser_itineraires(await self._get(f"{NAVITIA}/journeys", params))
+        itineraires = analyser_itineraires(await self._get(f"{NAVITIA}/journeys", params))
+        await self._reprendre_traces(itineraires)
+        return itineraires
+
+    async def traces_ligne(self, ligne_id: str) -> dict[str, Any]:
+        """Tracé (branches) d'une ligne, gardé une journée."""
+        deja = _TRACES_LIGNES.get(ligne_id)
+        if deja and datetime.now(UTC) - deja[0] < timedelta(days=1):
+            return deja[1]
+        ligne = await self._get(f"{NAVITIA}/lines/{quote(ligne_id)}", [("disable_geojson", "false")])
+        plan = analyser_plan_ligne(ligne, None)
+        if len(_TRACES_LIGNES) > 60:
+            _TRACES_LIGNES.clear()
+        _TRACES_LIGNES[ligne_id] = (datetime.now(UTC), plan)
+        return plan
+
+    async def _reprendre_traces(self, itineraires: list[dict[str, Any]]) -> None:
+        """Étapes dont le tracé PRIM est invraisemblable : on prend le morceau du tracé de la ligne."""
+        for it in itineraires:
+            for e in it.get("etapes", []):
+                if e.get("type") != "transport" or not e.get("trace_douteux") or not e.get("ligne_id"):
+                    continue
+                arrets = [[p[1], p[2]] for p in e.get("points_arret") or []]
+                try:
+                    morceau = trace_par_plan(await self.traces_ligne(e["ligne_id"]), arrets)
+                except Exception as err:  # noqa: BLE001 — le tracé n'est qu'un plus
+                    _LOGGER.debug("Tracé de %s indisponible : %s", e["ligne_id"], err)
+                    continue
+                if morceau:
+                    e["trace"] = _alleger(morceau, 120)
+                    e["trace_douteux"] = False
 
     async def perturbations_ligne(self, ligne_id: str) -> list[dict[str, Any]]:
         url = f"{NAVITIA}/line_reports/lines/{quote(ligne_id)}/line_reports"
@@ -510,8 +543,101 @@ def cles_perturbation(objet: Any) -> set[str]:
     return cles_arret(objet)
 
 
-def _trace(section: dict[str, Any], maxi: int = 150) -> list[list[float]]:
-    """Tracé d'une section (GeoJSON [lon, lat]) → [[lat, lon], …], allégé."""
+def _metres(a: list[float], b: list[float]) -> float:
+    dx = (b[1] - a[1]) * 111_320 * math.cos(math.radians((a[0] + b[0]) / 2))
+    dy = (b[0] - a[0]) * 110_540
+    return math.hypot(dx, dy)
+
+
+def _longueur(points: list[list[float]]) -> float:
+    return sum(_metres(points[i], points[i + 1]) for i in range(len(points) - 1))
+
+
+def sans_boucles(points: list[list[float]], rayon: float = 80, boucle_mini: float = 400) -> list[list[float]]:
+    """Coupe les allers-retours d'un tracé : quand il repasse au même endroit, on saute la boucle."""
+    if len(points) < 3:
+        return points
+    sortie = [points[0]]
+    i, n = 0, len(points)
+    while i < n - 1:
+        saut = None
+        parcouru = 0.0
+        cumul = [0.0]
+        for k in range(i + 1, n):
+            parcouru += _metres(points[k - 1], points[k])
+            cumul.append(parcouru)
+        for j in range(n - 1, i + 1, -1):
+            if cumul[j - i] > boucle_mini and _metres(points[i], points[j]) < rayon:
+                saut = j
+                break
+        i = saut if saut is not None else i + 1
+        sortie.append(points[i])
+    return sortie
+
+
+def caler_trace(points: list[list[float]], arrets: list[list[float]]) -> tuple[list[list[float]], bool]:
+    """Recale un tracé sur les arrêts réellement desservis → (tracé, douteux).
+
+    PRIM découpe parfois la forme d'une ligne à branches (RER A, B…) en emportant
+    un aller-retour sur une autre branche : entre deux arrêts consécutifs, on coupe
+    ces boucles. Si un morceau reste invraisemblable, le tracé est signalé douteux
+    (on le remplacera par celui de la ligne), jamais par une ligne droite.
+    """
+    if len(arrets) < 2:
+        return points, len(points) < 2
+    if len(points) < 2:
+        return [], True
+
+    def proche(a: list[float], debut: int = 0) -> int:
+        return min(range(debut, len(points)), key=lambda i: _metres(points[i], a))
+
+    def plausible(m: list[list[float]], a: list[float], b: list[float]) -> bool:
+        return (
+            len(m) >= 2
+            and _metres(m[0], a) < 400
+            and _metres(m[-1], b) < 400
+            and _longueur(m) <= 1.8 * _metres(a, b) + 500
+        )
+
+    if proche(arrets[0]) > proche(arrets[-1]):
+        points = points[::-1]
+    sortie: list[list[float]] = []
+    douteux = False
+    i = proche(arrets[0])
+    for a, b in zip(arrets, arrets[1:]):
+        j = proche(b, i)
+        morceau = points[i : j + 1]
+        if not plausible(morceau, a, b):
+            morceau = sans_boucles(morceau)
+            douteux = douteux or not plausible(morceau, a, b)
+        sortie.extend(morceau if not sortie else morceau[1:])
+        i = j
+    return sortie, douteux
+
+
+def trace_par_plan(plan: dict[str, Any], arrets: list[list[float]]) -> list[list[float]] | None:
+    """Morceau du tracé de la ligne (branche qui passe par tous les arrêts) entre le premier et le dernier arrêt."""
+    if len(arrets) < 2:
+        return None
+    meilleur = None
+    for branche in (plan or {}).get("traces") or []:
+        if len(branche) < 2:
+            continue
+        ecart = max(min(_metres(p, a) for p in branche) for a in arrets)
+        if ecart < 400 and (meilleur is None or ecart < meilleur[0]):
+            meilleur = (ecart, branche)
+    if meilleur is None:
+        return None
+    branche = meilleur[1]
+    i = min(range(len(branche)), key=lambda k: _metres(branche[k], arrets[0]))
+    j = min(range(len(branche)), key=lambda k: _metres(branche[k], arrets[-1]))
+    morceau = branche[i : j + 1] if i <= j else branche[j : i + 1][::-1]
+    morceau = sans_boucles(morceau)
+    return morceau if len(morceau) >= 2 else None
+
+
+def _trace(section: dict[str, Any], maxi: int = 150, arrets: list[list[float]] | None = None) -> tuple[list[list[float]], bool]:
+    """Tracé d'une section (GeoJSON [lon, lat]) → ([[lat, lon], …] recalé sur les arrêts et allégé, douteux)."""
     coords = ((section.get("geojson") or {}).get("coordinates")) or []
     points = []
     for c in coords:
@@ -519,10 +645,15 @@ def _trace(section: dict[str, Any], maxi: int = 150) -> list[list[float]]:
             points.append([round(float(c[1]), 6), round(float(c[0]), 6)])
         except (IndexError, TypeError, ValueError):
             continue
+    douteux = False
+    if arrets:
+        points, douteux = caler_trace(points, arrets)
+    elif len(points) < 2:
+        douteux = True
     if len(points) > maxi:
         pas = math.ceil(len(points) / maxi)
         points = points[::pas] + [points[-1]]
-    return points
+    return points, douteux
 
 
 def _point_lieu(lieu: Any) -> str | None:
@@ -624,13 +755,15 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                         points_arret.append([_nom_arret(sp.get("name")), round(float(c["lat"]), 5), round(float(c["lon"]), 5)])
                     except (KeyError, TypeError, ValueError):
                         pass
+                trace, douteux = _trace(s, 120, [[p[1], p[2]] for p in points_arret])
                 etapes.append(
                     {
                         "type": "transport",
                         **{k: section[k] for k in ("nom", "code", "mode", "couleur", "couleur_texte", "direction", "de", "vers", "ligne_id", "de_point", "vers_point", "route_id")},
                         "bouts": sorted(bouts),
                         "arrets": sorted(arrets),
-                        "trace": _trace(s, 120),
+                        "trace": trace,
+                        "trace_douteux": douteux,
                         "points_arret": points_arret[:80],
                         "depart_brut": s.get("departure_date_time"),
                         "mission": _mission(info),
@@ -644,7 +777,7 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                 if not duree:
                     continue
                 rues = [p.get("name") for p in s.get("path", []) or [] if p.get("name")][:3]
-                trace = _trace(s)
+                trace, _douteux = _trace(s)
                 if etapes and etapes[-1]["type"] == "marche":
                     etapes[-1]["duree"] += duree
                     etapes[-1]["vers"] = vers

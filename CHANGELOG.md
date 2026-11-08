@@ -3,6 +3,22 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.10.3] - 2026-11-09
+
+*Livraison non fonctionnelle (tracé toujours faux sur une ligne de RER à branches) : version restée sur `dev`, non publiée sur `master`.*
+
+### Corrigé
+
+- Aller-retour sur une autre branche coupé entre deux arrêts ; à défaut, morceau du tracé de la ligne (jamais de ligne droite).
+
+## [0.10.2] - 2026-11-08
+
+*Archive non conservée : son contenu est inclus dans la 0.10.3.*
+
+### Corrigé
+
+- Carte d'un trajet : premier recalage du tracé d'une ligne de RER à branches sur les arrêts desservis (morceaux invraisemblables remplacés par une ligne droite, approche abandonnée).
+
 ## [0.10.1] - 2026-11-08
 
 *Livraison non fonctionnelle (archive livrée mal formée : dossier custom_components/ et fichiers annexes à la racine) : version restée sur `dev`, non publiée sur `master`.*

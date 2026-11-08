@@ -5,7 +5,7 @@
  * à l'intérieur, propositions et alertes sont repliées ; les gares se replient d'un clic.
  * Passages : vert = atteignable (départ ≥ marche + marge), orange = en se pressant, gris = trop tard.
  */
-const VERSION = "0.10.1";
+const VERSION = "0.10.3";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },
@@ -526,7 +526,8 @@ class TransportsIdfCard extends HTMLElement {
     const segments = [];
     const correspondances = [];
     for (const e of etapes) {
-      const pts = e.trace?.length > 1 ? e.trace : e.de_coord && e.vers_coord ? [e.de_coord, e.vers_coord] : null;
+      const parArrets = e.points_arret?.length > 1 ? e.points_arret.map((x) => [x[1], x[2]]) : null;
+      const pts = e.trace?.length > 1 ? e.trace : parArrets || (e.de_coord && e.vers_coord ? [e.de_coord, e.vers_coord] : null);
       if (!pts) continue;
       if (e.type === "transport") {
         const { noms, toute } = interruptions(e.messages);
