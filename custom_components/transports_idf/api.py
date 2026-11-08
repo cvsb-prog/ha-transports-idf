@@ -615,8 +615,15 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                 sections.append(section)
                 bouts = cles_arret(s.get("from")) | cles_arret(s.get("to"))
                 arrets: set[str] = set(bouts)
+                points_arret = []  # [nom comparable, lat, lon] des arrêts parcourus (portion interrompue sur la carte)
                 for sdt in s.get("stop_date_times", []) or []:
                     arrets |= cles_arret(sdt.get("stop_point"))
+                    sp = sdt.get("stop_point") or {}
+                    c = sp.get("coord") or (sp.get("stop_area") or {}).get("coord") or {}
+                    try:
+                        points_arret.append([_nom_arret(sp.get("name")), round(float(c["lat"]), 5), round(float(c["lon"]), 5)])
+                    except (KeyError, TypeError, ValueError):
+                        pass
                 etapes.append(
                     {
                         "type": "transport",
@@ -624,6 +631,7 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                         "bouts": sorted(bouts),
                         "arrets": sorted(arrets),
                         "trace": _trace(s, 120),
+                        "points_arret": points_arret[:80],
                         "depart_brut": s.get("departure_date_time"),
                         "mission": _mission(info),
                         "depart": heure_navitia(s.get("departure_date_time")),

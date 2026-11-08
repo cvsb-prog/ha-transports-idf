@@ -3,6 +3,23 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.10.1] - 2026-11-08
+
+*Livraison non fonctionnelle (archive livrée mal formée : dossier custom_components/ et fichiers annexes à la racine) : version restée sur `dev`, non publiée sur `master`.*
+
+### Ajouté
+
+- Portion interrompue d'une ligne en pointillés gris (plan de ligne et cartes de trajet).
+
+### Modifié
+
+- Fond CARTO Voyager partout, atténué en thème sombre ; cartes sur toute la largeur.
+- Lien « itinéraire à pied détaillé » retiré.
+
+### Corrigé
+
+- Info trafic : bus à nom long alignés sur les autres colonnes.
+
 ## [0.10.0] - 2026-11-08
 
 ### Ajouté

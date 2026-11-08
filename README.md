@@ -3,7 +3,7 @@
 Intégration Home Assistant pour les transports en commun d'Île-de-France, à partir des API
 [PRIM](https://prim.iledefrance-mobilites.fr/) d'Île-de-France Mobilités, avec sa carte de tableau de bord.
 
-Version actuelle : **0.10.0** (voir le [CHANGELOG](CHANGELOG.md)).
+Version actuelle : **0.10.1** (voir le [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctionnalités
 
@@ -17,7 +17,7 @@ Version actuelle : **0.10.0** (voir le [CHANGELOG](CHANGELOG.md)).
 - Voie et mission des RER, panneau de sortie à l'arrivée.
 - **Trajet nominal** du jour, **jours du trajet** et **détour** avant les transports.
 - Messages de perturbation filtrés sur la portion empruntée, le sens et l'heure du trajet ; jours fériés.
-- Cartes : trajet à pied, trajet complet, plan d'une ligne.
+- Cartes : trajet à pied, trajet complet, plan d'une ligne ; portions interrompues en pointillés gris.
 
 ## Carte de tableau de bord
 
@@ -38,7 +38,7 @@ Mise à jour : remplacer le dossier, redémarrer, actualiser le navigateur. Rég
 
 ### Fond des cartes
 
-Sans réglage, les cartes utilisent OpenStreetMap. Avec une clé gratuite CARTO (Configurer → Réglages), elles utilisent les fonds CARTO clair et sombre.
+Sans réglage, les cartes utilisent OpenStreetMap. Avec une clé gratuite CARTO (Configurer → Réglages), elles utilisent CARTO Voyager, légèrement atténué en thème sombre.
 
 ## Données envoyées
 
