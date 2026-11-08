@@ -49,6 +49,7 @@ from .api import (
     normaliser,
     prochain_jour_ouvre,
     refs_candidates,
+    titre_ligne,
 )
 from .const import (
     A_COMMUNE,
@@ -75,10 +76,10 @@ from .const import (
     OPT_IGNORER_INFO,
     OPT_INTERVALLE_JOUR,
     OPT_INTERVALLE_NUIT,
-    OPT_LIGNES_INTERET,
     OPT_MARGE,
     OPT_NB_PASSAGES,
     SOUS_ARRET,
+    SOUS_LIGNE,
     SOUS_TRAJET,
     T_ARRIVEE_HABITUELLE,
     T_AVANCE,
@@ -204,17 +205,13 @@ class TransportsConfigFlow(ConfigFlow, domain=DOMAIN):
     @classmethod
     @callback
     def async_get_supported_subentry_types(cls, config_entry: ConfigEntry) -> dict[str, type[ConfigSubentryFlow]]:
-        return {SOUS_ARRET: ArretFlow, SOUS_TRAJET: TrajetFlow}
+        return {SOUS_ARRET: ArretFlow, SOUS_TRAJET: TrajetFlow, SOUS_LIGNE: LigneFlow}
 
 
 # ---------------------------------------------------------------------------
 class TransportsOptionsFlow(OptionsFlow):
-    def __init__(self) -> None:
-        self._trouvees: list[dict[str, Any]] = []
-        self._gardees: list[dict[str, Any]] = []
-
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return self.async_show_menu(step_id="init", menu_options=["reglages", "lignes"])
+        return await self.async_step_reglages(user_input)
 
     def _enregistrer(self, maj: dict[str, Any]) -> ConfigFlowResult:
         return self.async_create_entry(data={**self.config_entry.options, **maj})
@@ -241,47 +238,6 @@ class TransportsOptionsFlow(OptionsFlow):
         )
         return self.async_show_form(step_id="reglages", data_schema=schema)
 
-    async def async_step_lignes(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Lignes d'intérêt ajoutées au panneau info trafic (en plus des lignes de base)."""
-        actuelles = list(self.config_entry.options.get(OPT_LIGNES_INTERET) or [])
-        erreurs: dict[str, str] = {}
-        if user_input is not None:
-            gardees = [l for l in actuelles if l["id"] in set(user_input.get("garder", []))]
-            texte = (user_input.get("recherche") or "").strip()
-            if not texte:
-                return self._enregistrer({OPT_LIGNES_INTERET: gardees})
-            client = self.config_entry.runtime_data.client
-            try:
-                self._trouvees = await client.chercher_lignes(texte)
-            except ErreurPrim:
-                erreurs["base"] = "injoignable"
-            else:
-                if self._trouvees:
-                    self._gardees = gardees
-                    return await self.async_step_lignes_choix()
-                erreurs["base"] = "aucune_ligne"
-        schema = vol.Schema(
-            {
-                vol.Optional("garder", default=[l["id"] for l in actuelles]): _liste(
-                    [SelectOptionDict(value=l["id"], label=_libelle_ligne(l)) for l in actuelles], True
-                ),
-                vol.Optional("recherche"): TextSelector(),
-            }
-        )
-        return self.async_show_form(step_id="lignes", data_schema=schema, errors=erreurs)
-
-    async def async_step_lignes_choix(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        if user_input is not None:
-            choisies = [
-                {k: l.get(k) for k in ("id", "code", "nom", "nom_long", "mode", "couleur", "couleur_texte")}
-                for l in self._trouvees
-                if l["id"] in set(user_input.get("lignes", []))
-            ]
-            deja = {l["id"] for l in self._gardees}
-            return self._enregistrer({OPT_LIGNES_INTERET: self._gardees + [l for l in choisies if l["id"] not in deja]})
-        options = [SelectOptionDict(value=l["id"], label=_libelle_ligne(l)) for l in self._trouvees]
-        return self.async_show_form(step_id="lignes_choix", data_schema=vol.Schema({vol.Optional("lignes", default=[]): _liste(options, True)}))
-
 
 # ---------------------------------------------------------------------------
 class _Base(ConfigSubentryFlow):
@@ -301,6 +257,41 @@ class _Base(ConfigSubentryFlow):
         except ErreurPrim:
             return [], "injoignable"
         return lieux, (None if lieux else "aucun_resultat")
+
+
+class LigneFlow(_Base):
+    """Ajouter une ligne d'intérêt au panneau info trafic (même démarche qu'un arrêt : recherche puis choix)."""
+
+    def __init__(self) -> None:
+        self._trouvees: list[dict[str, Any]] = []
+
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        erreurs: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                self._trouvees = await self.client.chercher_lignes(user_input["recherche"].strip())
+            except ErreurPrim:
+                erreurs["base"] = "injoignable"
+            else:
+                if self._trouvees:
+                    return await self.async_step_choix()
+                erreurs["base"] = "aucune_ligne"
+        schema = vol.Schema({vol.Required("recherche"): TextSelector()})
+        return self.async_show_form(step_id="user", data_schema=self.add_suggested_values_to_schema(schema, user_input or {}), errors=erreurs)
+
+    async def async_step_choix(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        if user_input is not None:
+            l = next(x for x in self._trouvees if x["id"] == user_input["ligne"])
+            deja = {s.unique_id for s in self._get_entry().subentries.values() if s.subentry_type == SOUS_LIGNE}
+            if l["id"] in deja:
+                return self.async_abort(reason="deja_suivie")
+            donnees = {k: l.get(k) for k in ("id", "code", "nom", "nom_long", "mode", "couleur", "couleur_texte")}
+            return self.async_create_entry(title=titre_ligne(l), data=donnees, unique_id=l["id"])
+        options = [
+            SelectOptionDict(value=l["id"], label=f"{ICONES_GROUPE.get(groupe_mode(l.get('mode'), l.get('mode_physique')) or '', '[BUS]')} {_libelle_ligne(l)}")
+            for l in self._trouvees
+        ]
+        return self.async_show_form(step_id="choix", data_schema=vol.Schema({vol.Required("ligne"): _liste(options)}))
 
 
 class ArretFlow(_Base):
