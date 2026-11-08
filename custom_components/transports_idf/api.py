@@ -17,7 +17,7 @@ from urllib.parse import quote
 
 import aiohttp
 
-from .const import BASE_URL, EFFETS_INFO, NAVITIA
+from .const import BASE_URL, EFFETS_INFO, NAVITIA, TRACES_OPENDATA
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -135,8 +135,7 @@ class ClientPrim:
         deja = _TRACES_LIGNES.get(ligne_id)
         if deja and datetime.now(UTC) - deja[0] < timedelta(days=1):
             return deja[1]
-        ligne = await self._get(f"{NAVITIA}/lines/{quote(ligne_id)}", [("disable_geojson", "false")])
-        plan = analyser_plan_ligne(ligne, None)
+        plan = analyser_plan_ligne(await self._ligne_avec_traces(ligne_id), None)
         if len(_TRACES_LIGNES) > 60:
             _TRACES_LIGNES.clear()
         _TRACES_LIGNES[ligne_id] = (datetime.now(UTC), plan)
@@ -171,10 +170,48 @@ class ClientPrim:
         """Tracé de la ligne et ses arrêts (carte d'une ligne dans l'info trafic)."""
         base = f"{NAVITIA}/lines/{quote(ligne_id)}"
         ligne, arrets = await asyncio.gather(
-            self._get(base, [("disable_geojson", "false")]),
+            self._ligne_avec_traces(ligne_id),
             self._get(f"{base}/stop_areas", [("count", "400"), ("disable_geojson", "true")]),
         )
-        return analyser_plan_ligne(ligne, arrets)
+        plan = analyser_plan_ligne(ligne, arrets)
+        _LOGGER.debug("Plan de %s : %d tracés, %d arrêts", ligne_id, len(plan["traces"]), len(plan["arrets"]))
+        return plan
+
+    async def _ligne_avec_traces(self, ligne_id: str) -> dict[str, Any]:
+        """La ligne avec son tracé ; à défaut, les tracés de ses parcours."""
+        base = f"{NAVITIA}/lines/{quote(ligne_id)}"
+        ligne = await self._get(base, [("disable_geojson", "false")]) or {}
+        objet = next(iter(ligne.get("lines") or []), {}) or {}
+        if _traces_geojson(objet.get("geojson")):
+            return ligne
+        geo = await self._traces_opendata(ligne_id)
+        if geo:
+            return {**ligne, "lines": [{**objet, "geojson": geo}]}
+        try:
+            routes = await self._get(f"{base}/routes", [("count", "50"), ("disable_geojson", "false")])
+            ligne = {**ligne, "routes": (routes or {}).get("routes", [])}
+        except ErreurPrim as err:
+            _LOGGER.debug("Parcours de %s indisponibles : %s", ligne_id, err)
+        return ligne
+
+    async def _traces_opendata(self, ligne_id: str) -> dict[str, Any] | None:
+        """Tracé de la ligne dans l'open data IDFM (« Tracés des lignes de transport en commun »)."""
+        code = ligne_id.rsplit(":", 1)[-1]
+        if not code:
+            return None
+        params = [("where", f'route_id="IDFM:{code}"'), ("select", "route_id,shape"), ("limit", "1")]
+        try:
+            async with self._session.get(TRACES_OPENDATA, params=params, timeout=DELAI) as rep:
+                if rep.status != 200:
+                    _LOGGER.debug("Tracé open data de %s : HTTP %s", ligne_id, rep.status)
+                    return None
+                donnees = await rep.json(content_type=None)
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.debug("Tracé open data de %s indisponible : %s", ligne_id, err)
+            return None
+        resultat = next(iter((donnees or {}).get("results") or []), None) or {}
+        forme = resultat.get("shape") or {}
+        return forme.get("geometry") if forme.get("type") == "Feature" else forme or None
 
     async def chercher_lignes(self, texte: str) -> list[dict[str, Any]]:
         donnees = await self._get(f"{NAVITIA}/pt_objects", [("q", texte), ("type[]", "line"), ("count", "20")])
@@ -344,10 +381,9 @@ def _alleger(points: list[list[float]], maxi: int) -> list[list[float]]:
     return points[::pas] + [points[-1]]
 
 
-def analyser_plan_ligne(ligne: Any, arrets: Any) -> dict[str, Any]:
-    """GeoJSON (Multi)LineString de la ligne → [[[lat, lon], …], …] allégé ; arrêts → nom, position."""
-    objet = next(iter((ligne or {}).get("lines") or []), {}) or {}
-    geo = objet.get("geojson") or {}
+def _traces_geojson(geo: Any) -> list[list[list[float]]]:
+    """GeoJSON LineString / MultiLineString [lon, lat] → [[[lat, lon], …], …]."""
+    geo = geo or {}
     morceaux = geo.get("coordinates") or []
     if geo.get("type") == "LineString":
         morceaux = [morceaux]
@@ -361,6 +397,17 @@ def analyser_plan_ligne(ligne: Any, arrets: Any) -> dict[str, Any]:
                 continue
         if len(pts) > 1:
             traces.append(pts)
+    return traces
+
+
+def analyser_plan_ligne(ligne: Any, arrets: Any) -> dict[str, Any]:
+    """GeoJSON (Multi)LineString de la ligne → [[[lat, lon], …], …] allégé ; arrêts → nom, position."""
+    objet = next(iter((ligne or {}).get("lines") or []), {}) or {}
+    traces = _traces_geojson(objet.get("geojson"))
+    if not traces:
+        # Pas de tracé pour la ligne : on prend ceux de ses parcours (un par sens / branche).
+        for route in (ligne or {}).get("routes", []) or []:
+            traces += _traces_geojson(route.get("geojson"))
     total = sum(len(t) for t in traces) or 1
     traces = [_alleger(t, max(20, round(1500 * len(t) / total))) for t in traces]
     sortie_arrets = []
@@ -553,21 +600,37 @@ def _longueur(points: list[list[float]]) -> float:
     return sum(_metres(points[i], points[i + 1]) for i in range(len(points) - 1))
 
 
+def _metres_segment(p: list[float], a: list[float], b: list[float]) -> float:
+    """Distance (m) d'un point au segment a-b (projection locale à plat)."""
+    k = math.cos(math.radians(p[0]))
+    ax, ay = (a[1] - p[1]) * 111_320 * k, (a[0] - p[0]) * 110_540
+    bx, by = (b[1] - p[1]) * 111_320 * k, (b[0] - p[0]) * 110_540
+    dx, dy = bx - ax, by - ay
+    l2 = dx * dx + dy * dy
+    t = 0.0 if l2 == 0 else max(0.0, min(1.0, -(ax * dx + ay * dy) / l2))
+    return math.hypot(ax + t * dx, ay + t * dy)
+
+
 def sans_boucles(points: list[list[float]], rayon: float = 80, boucle_mini: float = 400) -> list[list[float]]:
-    """Coupe les allers-retours d'un tracé : quand il repasse au même endroit, on saute la boucle."""
-    if len(points) < 3:
+    """Coupe les allers-retours d'un tracé : quand il repasse au même endroit, on saute la boucle.
+
+    On compare chaque point aux segments suivants (et non aux seuls points) : les tracés
+    PRIM n'ont parfois qu'un point tous les quelques centaines de mètres.
+    """
+    n = len(points)
+    if n < 3:
         return points
+    cumul = [0.0]
+    for k in range(1, n):
+        cumul.append(cumul[-1] + _metres(points[k - 1], points[k]))
     sortie = [points[0]]
-    i, n = 0, len(points)
+    i = 0
     while i < n - 1:
         saut = None
-        parcouru = 0.0
-        cumul = [0.0]
-        for k in range(i + 1, n):
-            parcouru += _metres(points[k - 1], points[k])
-            cumul.append(parcouru)
         for j in range(n - 1, i + 1, -1):
-            if cumul[j - i] > boucle_mini and _metres(points[i], points[j]) < rayon:
+            if cumul[j - 1] - cumul[i] <= boucle_mini:
+                break
+            if _metres_segment(points[i], points[j - 1], points[j]) < rayon:
                 saut = j
                 break
         i = saut if saut is not None else i + 1
@@ -575,43 +638,60 @@ def sans_boucles(points: list[list[float]], rayon: float = 80, boucle_mini: floa
     return sortie
 
 
-def caler_trace(points: list[list[float]], arrets: list[list[float]]) -> tuple[list[list[float]], bool]:
+def caler_trace(points: list[list[float]], arrets: list[list[float]], rayon: float = 250) -> tuple[list[list[float]], bool]:
     """Recale un tracé sur les arrêts réellement desservis → (tracé, douteux).
 
-    PRIM découpe parfois la forme d'une ligne à branches (RER A, B…) en emportant
-    un aller-retour sur une autre branche : entre deux arrêts consécutifs, on coupe
-    ces boucles. Si un morceau reste invraisemblable, le tracé est signalé douteux
-    (on le remplacera par celui de la ligne), jamais par une ligne droite.
+    Les tracés PRIM sont parfois faux : sur une ligne de RER à branches, celui d'une
+    section part sur une autre branche, revient au départ, puis seulement dessert les arrêts.
+    Entre deux arrêts consécutifs, on garde donc le plus court morceau du tracé qui
+    part près du premier et arrive près du second, où qu'il soit dans le tracé ; on
+    y coupe encore les allers-retours. Un morceau invraisemblable rend le tracé
+    douteux (remplacé ailleurs si possible), jamais par une ligne droite.
     """
     if len(arrets) < 2:
         return points, len(points) < 2
     if len(points) < 2:
         return [], True
+    n = len(points)
+    cumul = [0.0]
+    for k in range(1, n):
+        cumul.append(cumul[-1] + _metres(points[k - 1], points[k]))
 
-    def proche(a: list[float], debut: int = 0) -> int:
-        return min(range(debut, len(points)), key=lambda i: _metres(points[i], a))
+    def pres(a: list[float]) -> list[int]:
+        proches = [k for k in range(n) if _metres(points[k], a) < rayon]
+        return proches or [min(range(n), key=lambda k: _metres(points[k], a))]
 
-    def plausible(m: list[list[float]], a: list[float], b: list[float]) -> bool:
-        return (
-            len(m) >= 2
-            and _metres(m[0], a) < 400
-            and _metres(m[-1], b) < 400
-            and _longueur(m) <= 1.8 * _metres(a, b) + 500
-        )
+    def passage(indices: list[int], k: int) -> list[int]:
+        """Indices consécutifs (un même passage du tracé près de l'arrêt) autour de k."""
+        ens = set(indices)
+        debut, fin = k, k
+        while debut - 1 in ens:
+            debut -= 1
+        while fin + 1 in ens:
+            fin += 1
+        return list(range(debut, fin + 1))
 
-    if proche(arrets[0]) > proche(arrets[-1]):
-        points = points[::-1]
     sortie: list[list[float]] = []
     douteux = False
-    i = proche(arrets[0])
+    pres_suivant = pres(arrets[0])
     for a, b in zip(arrets, arrets[1:]):
-        j = proche(b, i)
-        morceau = points[i : j + 1]
-        if not plausible(morceau, a, b):
-            morceau = sans_boucles(morceau)
-            douteux = douteux or not plausible(morceau, a, b)
-        sortie.extend(morceau if not sortie else morceau[1:])
-        i = j
+        depuis, vers = pres_suivant, pres(b)
+        pres_suivant = vers
+        couples = [(i, j) for i in depuis for j in vers if j > i]
+        if not couples:  # tracé à l'envers sur ce morceau
+            couples = [(i, j) for i in depuis for j in vers if j < i]
+        if not couples:
+            douteux = True
+            continue
+        i, j = min(couples, key=lambda c: abs(cumul[c[1]] - cumul[c[0]]))
+        # Dans le passage retenu près de chaque arrêt, on va jusqu'au point le plus proche de l'arrêt.
+        i = min(passage(depuis, i), key=lambda k: _metres(points[k], a))
+        j = min(passage(vers, j), key=lambda k: _metres(points[k], b))
+        morceau = points[i : j + 1] if i <= j else points[j : i + 1][::-1]
+        morceau = sans_boucles(morceau)
+        if _longueur(morceau) > 1.8 * _metres(a, b) + 500:
+            douteux = True
+        sortie.extend(morceau[1:] if sortie and sortie[-1] == morceau[0] else morceau)
     return sortie, douteux
 
 
