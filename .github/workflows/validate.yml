@@ -1,0 +1,23 @@
+name: Validation
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 4 * * 1"
+
+jobs:
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hacs/action@main
+        with:
+          category: integration
+          # Logo servi par l'intégration elle-même (dossier brand/, Home Assistant 2026.3+).
+          ignore: brands
