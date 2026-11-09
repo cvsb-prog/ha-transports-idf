@@ -22,6 +22,10 @@ from .const import BASE_URL, EFFETS_INFO, NAVITIA, TRACES_OPENDATA
 
 _LOGGER = logging.getLogger(__name__)
 
+# Débit vers PRIM : au plus ~5 départs de requête par seconde, et pauses avant de réessayer un 429.
+ESPACEMENT = 0.2
+PAUSES_429 = (1.0, 3.0, 8.0)
+
 DELAI = aiohttp.ClientTimeout(total=20)
 VITESSE_MARCHE = 1.2  # m/s (≈ 4,3 km/h), pour l'estimation de secours
 DETOUR = 1.3  # rapport distance à pied / distance à vol d'oiseau
@@ -38,7 +42,7 @@ class ErreurJeton(ErreurPrim):
 
 
 class ErreurQuota(ErreurPrim):
-    """Quota atteint (429)."""
+    """PRIM refuse encore après plusieurs essais (429 : trop de requêtes)."""
 
 
 _PLANS_COMPLETS: dict[str, tuple[datetime, dict[str, Any]]] = {}
@@ -50,30 +54,55 @@ class ClientPrim:
     def __init__(self, session: aiohttp.ClientSession, jeton: str) -> None:
         self._session = session
         self._jeton = jeton
-        # PRIM limite le nombre de requêtes par seconde : on en garde peu en vol.
-        self._verrou = asyncio.Semaphore(4)
+        # PRIM limite le débit (requêtes par seconde) : au démarrage, tous les arrêts,
+        # lignes et trajets partent en même temps. On en garde peu en vol, et on espace
+        # les départs ; un refus 429 est réessayé après une pause.
+        self._verrou = asyncio.Semaphore(3)
+        self._cadence = asyncio.Lock()
+        self._dernier_depart = 0.0
+
+    async def _attendre_son_tour(self) -> None:
+        async with self._cadence:
+            boucle = asyncio.get_running_loop()
+            attente = self._dernier_depart + ESPACEMENT - boucle.time()
+            if attente > 0:
+                await asyncio.sleep(attente)
+            self._dernier_depart = boucle.time()
 
     async def _get(self, url: str, params: list[tuple[str, str]] | None = None) -> Any:
-        async with self._verrou:
-            try:
-                async with self._session.get(
-                    url, params=params, headers={"apikey": self._jeton, "Accept": "application/json"}, timeout=DELAI
-                ) as rep:
-                    if rep.status in (401, 403):
-                        raise ErreurJeton(f"jeton refusé ({rep.status})")
-                    if rep.status == 429:
-                        raise ErreurQuota("quota PRIM atteint")
-                    if rep.status == 404:
-                        # Navitia répond 404 pour « aucune solution » : on rend le corps.
-                        try:
+        for essai in range(len(PAUSES_429) + 1):
+            async with self._verrou:
+                await self._attendre_son_tour()
+                try:
+                    async with self._session.get(
+                        url, params=params, headers={"apikey": self._jeton, "Accept": "application/json"}, timeout=DELAI
+                    ) as rep:
+                        if rep.status in (401, 403):
+                            raise ErreurJeton(f"jeton refusé ({rep.status})")
+                        if rep.status == 429:
+                            corps = (await rep.text())[:200]
+                            pause = PAUSES_429[essai] if essai < len(PAUSES_429) else None
+                            try:
+                                pause = max(pause or 0, min(30.0, float(rep.headers.get("Retry-After", ""))))
+                            except ValueError:
+                                pass
+                            _LOGGER.debug("PRIM 429 sur %s (essai %d) : %s", url.rsplit("/", 1)[-1], essai + 1, corps)
+                            if essai >= len(PAUSES_429):
+                                raise ErreurQuota(f"PRIM refuse : trop de requêtes (429) — {corps or 'sans détail'}")
+                        elif rep.status == 404:
+                            # Navitia répond 404 pour « aucune solution » : on rend le corps.
+                            try:
+                                return await rep.json(content_type=None)
+                            except (aiohttp.ContentTypeError, ValueError):
+                                return {}
+                        elif rep.status >= 400:
+                            raise ErreurPrim(f"HTTP {rep.status} sur {url}")
+                        else:
                             return await rep.json(content_type=None)
-                        except (aiohttp.ContentTypeError, ValueError):
-                            return {}
-                    if rep.status >= 400:
-                        raise ErreurPrim(f"HTTP {rep.status} sur {url}")
-                    return await rep.json(content_type=None)
-            except (TimeoutError, aiohttp.ClientError) as err:
-                raise ErreurPrim(f"PRIM injoignable : {err}") from err
+                except (TimeoutError, aiohttp.ClientError) as err:
+                    raise ErreurPrim(f"PRIM injoignable : {err}") from err
+            await asyncio.sleep(pause)  # hors du verrou : les autres requêtes peuvent passer
+        raise ErreurQuota("PRIM refuse : trop de requêtes (429)")
 
     # ---- Prochains passages (SIRI Lite) ---------------------------------
     async def passages(self, ref: str) -> list[dict[str, Any]]:
