@@ -3,6 +3,17 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié]
+
+### Ajouté
+
+- Intégration continue GitHub Actions : ruff et tests à chaque push, hassfest et validation HACS.
+- hacs.json, préalable à la distribution par HACS.
+
+### Modifié
+
+- manifest.json : documentation et suivi des problèmes sur le dépôt, codeowners.
+
 ## [0.10.9] - 2026-11-09
 
 ### Ajouté

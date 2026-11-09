@@ -9,7 +9,7 @@ Version actuelle : **0.10.9** (voir le [CHANGELOG](CHANGELOG.md)).
 
 - **Arrêts** : prochains passages en temps réel (SIRI Lite), capteur « prochain départ atteignable » selon le temps de marche et une marge.
 - **Trajets** : itinéraire habituel, capteur binaire « perturbation » sur les lignes empruntées.
-- Événement `transports_idf_alerte` pour bâtir ses propres alertes de trajet.
+- Événement `transports_idf_alerte` pour bâtir ses propres alertes de trajet (automatisation d'exemple dans `examples/`).
 - Service **Partir maintenant** : itinéraires d'un trajet au départ de maintenant, marche comprise.
 - **Réglages** : zone de départ, marge « en se pressant », rafraîchissement jour / nuit.
 - **Lignes d'intérêt** : sous-entrées « Ligne », suivies dans l'info trafic.
@@ -61,6 +61,8 @@ pip install -r requirements_test.txt
 pytest
 ruff check --select F,E9 custom_components tests
 ```
+
+L'intégration continue (GitHub Actions) lance les tests, ruff, hassfest et la validation HACS à chaque push et pull request.
 
 Branches : `master` (versions publiées), `dev` (développement) ; une branche `feature/…` ou `fix/…` par chantier,
 rebasée sur `dev` puis fusionnée sans avance rapide (`--no-ff`).
