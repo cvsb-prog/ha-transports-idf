@@ -3,7 +3,7 @@
 Intégration Home Assistant pour les transports en commun d'Île-de-France, à partir des API
 [PRIM](https://prim.iledefrance-mobilites.fr/) d'Île-de-France Mobilités, avec sa carte de tableau de bord.
 
-Version actuelle : **0.10.8** (voir le [CHANGELOG](CHANGELOG.md)).
+Version actuelle : **0.10.9** (voir le [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctionnalités
 
@@ -53,6 +53,17 @@ Sans réglage, les cartes utilisent OpenStreetMap. Avec une clé gratuite CARTO 
 - Logo Île-de-France Mobilités dans `brand/`.
 - IDFM « Tracés des lignes de transport en commun » (open data), interrogé à la demande.
 - Données temps réel et calcul d'itinéraire : PRIM, Île-de-France Mobilités.
+
+## Développement
+
+```bash
+pip install -r requirements_test.txt
+pytest
+ruff check --select F,E9 custom_components tests
+```
+
+Branches : `master` (versions publiées), `dev` (développement) ; une branche `feature/…` ou `fix/…` par chantier,
+rebasée sur `dev` puis fusionnée sans avance rapide (`--no-ff`).
 
 ## Licence
 

@@ -1,0 +1,82 @@
+alias: Transports – alertes de trajet
+description: >-
+  Les jours travaillés, prévient la personne d'un trajet (sur ses téléphones
+  uniquement) pendant la veille du trajet : ligne de l'itinéraire perturbée
+  (correspondances comprises), retour à la normale, et — pour un trajet à heure
+  d'arrivée cible — départ à avancer pour arriver à l'heure. L'intégration Transports IDF envoie l'événement ; tout le reste est ici.
+mode: queued
+triggers:
+  - trigger: event
+    event_type: transports_idf_alerte
+conditions:
+  - condition: state
+    entity_id: binary_sensor.workday_sensor
+    state: "on"
+actions:
+  - variables:
+      d: "{{ trigger.event.data }}"
+      # Téléphones de la personne : ses traqueurs fournis par l'application compagnon.
+      services: >-
+        {% set ns = namespace(s=[]) %}
+        {% for t in state_attr(d.personne, 'device_trackers') or [] %}
+          {% set app = device_id(t) %}
+          {% if app and 'mobile_app' in (device_attr(app, 'identifiers') or []) | map('first') | list %}
+            {% set ns.s = ns.s + ['notify.mobile_app_' ~ (device_attr(app, 'name') | slugify)] %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.s | unique | list }}
+      heure: >-
+        {% set h = d.heure or d.heure_depart or '00:00' %}{{ h[:2] | int }} h {{ h[3:5] }}
+      repere: "{{ ('arrivée ' if d.type_heure == 'arrivee' else 'départ ') ~ heure }}"
+      c: "{{ d.conseil or {} }}"
+      titre: >-
+        {% if d.type == 'perturbation' %}⚠️ {{ d.trajet }} ({{ repere }}) : perturbation
+        {%- elif d.type == 'retour_normal' %}✅ {{ d.trajet }} ({{ repere }}) : trafic normal
+        {%- elif c.impossible %}⛔ {{ d.trajet }} : arrivée à {{ heure }} impossible
+        {%- else %}⏰ {{ d.trajet }} : pars à {{ c.depart_h }} au plus tard{% endif %}
+      message: |-
+        {%- if d.type == 'perturbation' %}
+        {%- for p in d.nouvelles %}
+        {{ p.lignes_trajet | join(', ') }} — {{ p.titre }}
+        {%- endfor %}
+        {%- if d.perturbations | count > d.nouvelles | count %}
+        ({{ d.perturbations | count }} perturbations en cours sur le trajet)
+        {%- endif %}
+        {%- if c.depart_h and not c.impossible %}
+        Pour arriver à {{ heure }} : pars à {{ c.depart_h }} au plus tard ({{ c.resume }}).
+        {%- elif d.rechange and d.rechange.texte %}
+        Itinéraire de rechange ({{ d.rechange.resume }}) :
+        {{ d.rechange.texte }}
+        {%- elif d.rechange and d.rechange.resume %}
+        Rechange : {{ d.rechange.resume }}
+        {%- endif %}
+        {%- elif d.type == 'retour_normal' %}
+        Plus aucune perturbation sur {{ d.itineraire }}.
+        {%- elif c.impossible %}
+        Aucun itinéraire ne permet plus d'arriver à {{ heure }}.
+        {%- else %}
+        Pour arriver à {{ heure }}, {{ c.avance }} min plus tôt que d'habitude (départ habituel {{ (d.depart_habituel[:2] | int) ~ ' h ' ~ d.depart_habituel[3:5] }}) :
+        {{ c.texte }}
+        {%- endif %}
+  - if:
+      - condition: template
+        value_template: "{{ services | count == 0 }}"
+    then:
+      - action: persistent_notification.create
+        data:
+          title: "{{ titre }}"
+          message: "{{ message }}\n(aucun téléphone trouvé pour {{ d.personne }})"
+          notification_id: "transports_{{ d.sous_entree }}"
+    else:
+      - repeat:
+          for_each: "{{ services }}"
+          sequence:
+            - action: "{{ repeat.item }}"
+              continue_on_error: true
+              data:
+                title: "{{ titre }}"
+                message: "{{ message }}"
+                data:
+                  tag: "transports_{{ d.sous_entree }}"
+                  group: transports
+                  channel: Transports

@@ -3,6 +3,16 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [0.10.9] - 2026-11-09
+
+### Ajouté
+
+- Arrêts préférés : clic sur le logo d'une ligne pour afficher son tracé sous l'arrêt.
+
+### Corrigé
+
+- Faux « quota PRIM atteint » au démarrage : requêtes espacées, refus 429 réessayés, message « trop de requêtes (429) ».
+
 ## [0.10.8] - 2026-11-09
 
 ### Corrigé

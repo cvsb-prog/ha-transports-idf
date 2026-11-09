@@ -5,7 +5,7 @@
  * à l'intérieur, propositions et alertes sont repliées ; les gares se replient d'un clic.
  * Passages : vert = atteignable (départ ≥ marche + marge), orange = en se pressant, gris = trop tard.
  */
-const VERSION = "0.10.8";
+const VERSION = "0.10.9";
 
 const ETATS = {
   atteignable: { libelle: "atteignable", defaut: "var(--success-color, #2e7d32)" },
@@ -110,6 +110,7 @@ class TransportsIdfCard extends HTMLElement {
     this._ligneInfo = null; // ligne dont on lit le détail dans l'info trafic
     this._rech = { texte: "", lieux: [], dest: null, depuis: null, depuisTexte: "", lieuxDepuis: [], mode: "maintenant", heure: "", date: "", resultats: null, erreur: "", calcul: false };
     this._cartes = new Map();
+    this._planArret = new Map(); // arrêt → ligne dont le tracé est affiché sous l'arrêt
     this._plansLigne = new Map(); // ligne → plan (null : en cours) // clé → { el, carte, tuiles, sombre } (cartes Leaflet gardées entre deux rendus)
     this._donneesCartes = new Map(); // clé → { trace, a, b }
     try {
@@ -288,6 +289,13 @@ class TransportsIdfCard extends HTMLElement {
       this._plans.has(id) ? this._plans.delete(id) : this._plans.add(id);
       return this._rendu();
     }
+    const tracer = t.closest?.("[data-ligne-plan]");
+    if (tracer) {
+      e.stopPropagation();
+      const [arret, ligne] = tracer.dataset.lignePlan.split("|");
+      this._planArret.get(arret) === ligne ? this._planArret.delete(arret) : this._planArret.set(arret, ligne);
+      return this._rendu();
+    }
     const partir = t.closest?.("[data-partir]");
     if (partir) return this._partir(partir.dataset.partir);
     const ligne = t.closest?.("[data-ligne-info]");
@@ -428,7 +436,7 @@ class TransportsIdfCard extends HTMLElement {
       ${ouvert ? `<div class="pli-corps">${corps}</div>` : ""}</div>`;
   }
 
-  _logo(l, { glyphe = false, alerte = null, cliquable = false } = {}) {
+  _logo(l, { glyphe = false, alerte = null, cliquable = false, plan = null } = {}) {
     const groupe = groupeDe(l);
     const code = l.nom ?? l.ligne ?? l.code ?? "?";
     const fond = l.couleur || "#666";
@@ -440,9 +448,12 @@ class TransportsIdfCard extends HTMLElement {
     const ident = l.id ?? l.ligne_id;
     const attr = cliquable === "info" ? "data-ligne-info" : "data-ligne-msg";
     const choisi = cliquable && (cliquable === "info" ? this._ligneInfo : this._ligneMsg) === ident;
-    const attrs = cliquable ? ` ${attr}="${echapper(ident)}" role="button" tabindex="0" title="Voir l'info trafic"` : "";
+    const attrs = plan && ident
+      ? ` data-ligne-plan="${echapper(`${plan}|${ident}`)}" role="button" tabindex="0" title="Voir le tracé de la ligne"`
+      : cliquable ? ` ${attr}="${echapper(ident)}" role="button" tabindex="0" title="Voir l'info trafic"` : "";
+    const planChoisi = plan && ident && this._planArret.get(plan) === ident;
     const long = String(code).length > 2 ? " long" : "";
-    return `${g}<span class="logo f-${norm(groupe)}${long}${niveau ? ` a-${niveau}` : ""}${choisi ? " choisi" : ""}" style="--c:${echapper(fond)};--t:${echapper(texte)}"${attrs}>${echapper(code)}${pastille}</span>`;
+    return `${g}<span class="logo f-${norm(groupe)}${long}${niveau ? ` a-${niveau}` : ""}${choisi || planChoisi ? " choisi" : ""}" style="--c:${echapper(fond)};--t:${echapper(texte)}"${attrs}>${echapper(code)}${pastille}</span>`;
   }
 
   _chaine(etapes, compacte = false) {
@@ -898,26 +909,38 @@ class TransportsIdfCard extends HTMLElement {
   _planLigne(ligne) {
     const cle = `ligne|${ligne.id}`;
     const ouvert = this._ouvert(cle, false);
-    let corps = "";
-    if (ouvert) {
-      const plan = this._plansLigne.get(ligne.id);
-      if (plan === undefined) {
-        this._plansLigne.set(ligne.id, null);
-        this._hass
-          .callWS({ type: "call_service", domain: "transports_idf", service: "plan_ligne", service_data: { ligne_id: ligne.id }, return_response: true })
-          .then((rep) => this._plansLigne.set(ligne.id, rep?.response || { erreur: true }))
-          .catch(() => this._plansLigne.set(ligne.id, { erreur: true }))
-          .finally(() => this._rendu());
-      }
-      if (!plan) corps = `<div class="sous">Chargement du plan…</div>`;
-      else if (plan.erreur || (!plan.traces?.length && !plan.arrets?.length)) corps = `<div class="sous">Plan indisponible.</div>`;
-      else {
-        const { noms, toute } = interruptions(ligne.perturbations);
-        this._donneesCartes.set(cle, { lignes: plan.traces || [], arrets: plan.arrets || [], couleur: ligne.couleur || plan.couleur, touches: noms, toute });
-        corps = `<div class="plan plan-ligne"><div class="carte-l" data-carte="${echapper(cle)}"></div></div>`;
-      }
-    }
+    const corps = ouvert ? this._corpsPlanLigne(ligne, cle) : "";
     return `<div class="voir-carte cliquable lien-carte" data-bascule="${echapper(cle)}" data-defaut="0" role="button" tabindex="0" aria-expanded="${ouvert}">${ouvert ? "Masquer le plan de la ligne" : "Voir le plan de la ligne"}</div>${corps}`;
+  }
+
+  // Carte d'une ligne (tracé, arrêts, portion interrompue) ; ici : arrêt à mettre en avant.
+  _corpsPlanLigne(ligne, cle, ici = null) {
+    const plan = this._plansLigne.get(ligne.id);
+    if (plan === undefined) {
+      this._plansLigne.set(ligne.id, null);
+      this._hass
+        .callWS({ type: "call_service", domain: "transports_idf", service: "plan_ligne", service_data: { ligne_id: ligne.id }, return_response: true })
+        .then((rep) => this._plansLigne.set(ligne.id, rep?.response || { erreur: true }))
+        .catch(() => this._plansLigne.set(ligne.id, { erreur: true }))
+        .finally(() => this._rendu());
+    }
+    if (!plan) return `<div class="sous">Chargement du plan…</div>`;
+    if (plan.erreur || (!plan.traces?.length && !plan.arrets?.length)) return `<div class="sous">Plan indisponible.</div>`;
+    const { noms, toute } = interruptions(ligne.perturbations);
+    this._donneesCartes.set(cle, { lignes: plan.traces || [], arrets: plan.arrets || [], couleur: ligne.couleur || plan.couleur, touches: noms, toute, b: ici });
+    return `<div class="plan plan-ligne"><div class="carte-l" data-carte="${echapper(cle)}"></div></div>`;
+  }
+
+  // Tracé de la ligne choisie (clic sur son logo) sous les passages d'un arrêt.
+  _planDepuisArret(arret) {
+    const id = this._planArret.get(arret.entity_id);
+    if (!id) return "";
+    const p = (arret.attributes.passages || []).find((x) => x.ligne_id === id) || {};
+    const info = (this._etats("info_trafic")[0]?.attributes.lignes || []).find((l) => l.id === id) || {};
+    const ligne = { id, couleur: p.couleur || info.couleur, perturbations: info.perturbations || [] };
+    const a = arret.attributes;
+    const ici = a.lat != null && a.lon != null ? [Number(a.lat), Number(a.lon)] : null;
+    return `<div class="plan-depuis-arret">${this._corpsPlanLigne(ligne, `arret-ligne|${arret.entity_id}|${id}`, ici)}</div>`;
   }
 
   _htmlPerturbations(ligne) {
@@ -962,7 +985,7 @@ class TransportsIdfCard extends HTMLElement {
       return `<span class="temps${reel ? "" : " theorique"}">${reel ? ONDES : ""}${ps.map(nombre).join(", ")} ${unite}</span>`;
     };
     if (this._config.regroupement === "chronologique") {
-      return passages.slice(0, n).map((p) => `<div class="ligne-passage ${p.etat}">${this._logo(p)}<span class="dest">${echapper(p.destination || "")}${p.quai ? `<span class="quai">voie ${echapper(p.quai)}</span>` : ""}</span>${temps([p])}</div>`).join("");
+      return passages.slice(0, n).map((p) => `<div class="ligne-passage ${p.etat}">${this._logo(p, { plan: arret.entity_id })}<span class="dest">${echapper(p.destination || "")}${p.quai ? `<span class="quai">voie ${echapper(p.quai)}</span>` : ""}</span>${temps([p])}</div>`).join("");
     }
     const groupes = new Map();
     for (const p of passages) {
@@ -973,7 +996,7 @@ class TransportsIdfCard extends HTMLElement {
     return [...groupes.values()]
       .map((g) => {
         const tete = g.find((p) => p.etat !== "trop_tard") || g[0];
-        return `<div class="ligne-passage ${tete.etat}">${this._logo(g[0])}<span class="dest">${echapper(g[0].destination || "")}</span>${temps(g.slice(0, Math.max(1, Math.min(n, 3))))}</div>`;
+        return `<div class="ligne-passage ${tete.etat}">${this._logo(g[0], { plan: arret.entity_id })}<span class="dest">${echapper(g[0].destination || "")}</span>${temps(g.slice(0, Math.max(1, Math.min(n, 3))))}</div>`;
       })
       .join("");
   }
@@ -1127,7 +1150,7 @@ class TransportsIdfCard extends HTMLElement {
         b.plan.hidden = true;
       }
       b.corps.hidden = replie;
-      if (!replie) this._maj(b.corps, this._htmlPassages(arret));
+      if (!replie) this._maj(b.corps, this._htmlPassages(arret) + this._planDepuisArret(arret));
     });
     this._maj(this._el.aucun, cfg.afficher_gares && !arrets.length ? `<div class="vide">Aucun arrêt : ajoute-en un depuis l'intégration Transports IDF.</div>` : "");
     this._monterCartes();
@@ -1195,7 +1218,8 @@ class TransportsIdfCard extends HTMLElement {
       .logo.f-rer, .logo.f-train { border-radius: 5px; min-width: 1.6em; height: 1.6em; }
       .logo.f-tram { background: var(--ha-card-background, #fff); color: var(--primary-text-color); border-top: 3px solid var(--c); border-bottom: 3px solid var(--c); border-radius: 2px; }
       .logo.a-interrompu { outline: 2px solid var(--ti-rouge); outline-offset: 1px; }
-      .logo[data-ligne-info] { cursor: pointer; }
+      .logo[data-ligne-info], .logo[data-ligne-plan] { cursor: pointer; }
+      .plan-depuis-arret { margin-top: 6px; }
       .logo.choisi { outline: 2px solid var(--primary-color); outline-offset: 2px; }
       .pastille {
         position: absolute; right: -6px; bottom: -6px; min-width: 13px; height: 13px; border-radius: 3px; font-size: 9px; font-weight: 800;
