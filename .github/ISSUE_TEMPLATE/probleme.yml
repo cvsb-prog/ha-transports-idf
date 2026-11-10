@@ -1,0 +1,41 @@
+name: Signaler un problème
+description: Quelque chose ne fonctionne pas comme prévu.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci ! Avant d'envoyer, retirez du journal votre jeton PRIM et tout lieu personnel (adresse, arrêt près de chez vous).
+  - type: input
+    id: version
+    attributes:
+      label: Version de Transports IDF
+      description: Page de l'intégration, ou console du navigateur (« TRANSPORTS-IDF-CARD x.y.z »).
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: ha
+    attributes:
+      label: Version de Home Assistant
+      placeholder: "2026.2.3"
+    validations:
+      required: true
+  - type: textarea
+    id: probleme
+    attributes:
+      label: Ce qui se passe
+      description: Ce que vous avez fait, ce que vous attendiez, ce qui s'est passé.
+    validations:
+      required: true
+  - type: textarea
+    id: journal
+    attributes:
+      label: Journal
+      description: Page de l'intégration → « Activer la journalisation de débogage », reproduire, puis désactiver pour télécharger le journal.
+      render: text
+  - type: textarea
+    id: captures
+    attributes:
+      label: Captures
+      description: Utile si la carte de tableau de bord est en cause.
