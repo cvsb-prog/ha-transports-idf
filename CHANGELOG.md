@@ -3,6 +3,12 @@
 Toutes les évolutions notables de Transports IDF. Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 numérotation [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié]
+
+### Corrigé
+
+- Erreur « binary_sensor.workday_sensor … missing or not currently available » au démarrage : Workday n'est plus interrogé avant d'être chargé (jours fériés tirés du calendrier français en attendant).
+
 ## [1.0.0] - 2026-11-10
 
 Première version distribuée par HACS (dépôt personnalisé). Aucun changement de fonctionnement par rapport à la 0.10.9.
