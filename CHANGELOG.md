@@ -5,6 +5,10 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Ajouté
+
+- Intégration continue : bouton « Run workflow » (lancement manuel des tests et de la validation).
+
 ### Corrigé
 
 - Erreur « binary_sensor.workday_sensor … missing or not currently available » au démarrage : Workday n'est plus interrogé avant d'être chargé (jours fériés tirés du calendrier français en attendant).
