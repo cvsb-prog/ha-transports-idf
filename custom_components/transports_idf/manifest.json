@@ -1,12 +1,18 @@
 {
   "domain": "transports_idf",
   "name": "Transports IDF",
-  "after_dependencies": ["frontend", "http"],
-  "codeowners": [],
+  "after_dependencies": [
+    "frontend",
+    "http"
+  ],
+  "codeowners": [
+    "@cvsb-prog"
+  ],
   "config_flow": true,
-  "documentation": "https://prim.iledefrance-mobilites.fr/",
+  "documentation": "https://github.com/cvsb-prog/ha-transports-idf",
   "integration_type": "service",
   "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/cvsb-prog/ha-transports-idf/issues",
   "requirements": [],
-  "version": "0.10.9"
+  "version": "1.0.0"
 }
