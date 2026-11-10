@@ -347,3 +347,27 @@ async def test_plan_ligne_par_l_open_data(hass: HomeAssistant, aioclient_mock):
     await hass.async_block_till_done()
     rep = await hass.services.async_call(DOMAIN, "plan_ligne", {"ligne_id": "line:IDFM:C01743"}, blocking=True, return_response=True)
     assert [len(t) for t in rep["traces"]] == [3, 2] and rep["couleur"] == "#5291CE"
+
+
+async def test_workday_pas_encore_charge(hass: HomeAssistant):
+    """Au démarrage, capteur Workday enregistré mais sans état : pas d'appel (pas d'erreur au journal), calendrier français."""
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.transports_idf.trajets import jours_feries
+
+    er.async_get(hass).async_get_or_create("binary_sensor", "workday", "jours_ouvres", suggested_object_id="workday_sensor")
+    appels = []
+
+    async def check_date(call):
+        appels.append(call)
+        return {"binary_sensor.workday_sensor": {"workday": True}}
+
+    from homeassistant.core import SupportsResponse
+
+    hass.services.async_register("workday", "check_date", check_date, supports_response=SupportsResponse.ONLY)
+    feries = await jours_feries(hass, date(2026, 11, 9))
+    assert appels == [] and date(2026, 11, 11) in feries
+    # Une fois Workday chargé, il est bien interrogé.
+    hass.states.async_set("binary_sensor.workday_sensor", "on", {"workdays": ["mon", "tue", "wed", "thu", "fri"]})
+    await jours_feries(hass, date(2026, 11, 9))
+    assert appels

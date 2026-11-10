@@ -116,8 +116,10 @@ async def jours_feries(hass: HomeAssistant, debut: date, nombre: int = 9) -> set
     registre = er.async_get(hass)
     capteur = next((e.entity_id for e in registre.entities.values() if e.platform == "workday" and e.domain == "binary_sensor" and not e.disabled), None)
     ouvres: set[str] = set()
-    if capteur and hass.services.has_service("workday", "check_date"):
-        etat = hass.states.get(capteur)
+    etat = hass.states.get(capteur) if capteur else None
+    # Au démarrage, Workday peut ne pas être encore chargé : l'appeler ferait journaliser une erreur
+    # par Home Assistant (« Referenced entities … are missing ») ; on s'en tient alors au calendrier.
+    if etat and etat.state not in ("unavailable", "unknown") and hass.services.has_service("workday", "check_date"):
         ouvres = set((etat.attributes.get("workdays") if etat else None) or ["mon", "tue", "wed", "thu", "fri"])
         noms = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
         for j in jours:
