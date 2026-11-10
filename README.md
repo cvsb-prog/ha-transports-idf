@@ -3,7 +3,7 @@
 Intégration Home Assistant pour les transports en commun d'Île-de-France, à partir des API
 [PRIM](https://prim.iledefrance-mobilites.fr/) d'Île-de-France Mobilités, avec sa carte de tableau de bord.
 
-Version actuelle : **0.10.9** (voir le [CHANGELOG](CHANGELOG.md)).
+Version actuelle : **1.0.0** (voir le [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctionnalités
 
@@ -26,15 +26,22 @@ Elle se règle depuis l'éditeur visuel (sections à masquer, arrêts à affiche
 
 ## Installation
 
-Installation manuelle (HACS prévu une fois l'intégration mûre) :
+### Par HACS (conseillé)
 
-1. Copier `custom_components/transports_idf` dans le dossier `custom_components` de Home Assistant.
-2. Redémarrer Home Assistant.
+1. HACS → ⋮ → **Dépôts personnalisés** → `https://github.com/cvsb-prog/ha-transports-idf`, type **Intégration**.
+2. Rechercher **Transports IDF** dans HACS → **Télécharger**, puis redémarrer Home Assistant.
 3. Paramètres → Appareils et services → Ajouter une intégration → **Transports IDF**, puis coller un jeton PRIM
    (compte gratuit sur prim.iledefrance-mobilites.fr ; le jeton n'est affiché qu'à sa création).
 4. Ajouter des arrêts, des trajets et des lignes depuis la page de l'intégration.
 
-Mise à jour : remplacer le dossier, redémarrer, actualiser le navigateur. Réglages, arrêts et trajets sont conservés.
+Les mises à jour arrivent par HACS. Après une mise à jour, actualiser le navigateur (dans l'application mobile : vider le cache).
+
+### À la main
+
+Copier `custom_components/transports_idf` dans le dossier `custom_components` de Home Assistant, redémarrer, puis suivre les
+étapes 3 et 4. Mise à jour : remplacer le dossier, redémarrer, actualiser le navigateur.
+
+Dans les deux cas, réglages, arrêts, trajets et lignes sont conservés : ils sont enregistrés par Home Assistant, pas dans le dossier.
 
 ### Fond des cartes
 
@@ -53,6 +60,11 @@ Sans réglage, les cartes utilisent OpenStreetMap. Avec une clé gratuite CARTO 
 - Logo Île-de-France Mobilités dans `brand/`.
 - IDFM « Tracés des lignes de transport en commun » (open data), interrogé à la demande.
 - Données temps réel et calcul d'itinéraire : PRIM, Île-de-France Mobilités.
+
+## Signaler un problème
+
+Ouvrir une [issue](https://github.com/cvsb-prog/ha-transports-idf/issues/new/choose) avec la version, le journal en mode debug
+(page de l'intégration → « Activer la journalisation de débogage ») et une capture si la carte est en cause.
 
 ## Développement
 
