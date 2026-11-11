@@ -73,9 +73,17 @@ const decouper = (trace, touches) => {
   return a === b ? null : { avant: trace.slice(0, a + 1), gris: trace.slice(a, b + 1), apres: trace.slice(b) };
 };
 // Messages « interrompu » d'une étape ou d'une ligne → noms d'arrêts touchés, et si toute la ligne l'est.
+// Messages « interrompu » : toute = toute la ligne coupée (pointillés partout) ; coupe = arrêts entre lesquels
+// la ligne est coupée (pointillés sur ce tronçon) ; noms = tous les arrêts cités (non desservis, marqués sur la carte).
+// Des arrêts non desservis ne coupent pas la ligne : les trains passent sans s'arrêter.
 const interruptions = (messages) => {
   const ms = (messages || []).filter((m) => m.niveau === "interrompu");
-  return { noms: new Set(ms.flatMap((m) => m.arrets_touches || [])), toute: ms.some((m) => !(m.arrets_touches || []).length) };
+  const portee = (m) => m.portee || ((m.arrets_touches || []).length ? "troncon" : "ligne");
+  return {
+    noms: new Set(ms.flatMap((m) => m.arrets_touches || [])),
+    coupe: new Set(ms.filter((m) => portee(m) === "troncon").flatMap((m) => m.troncon_touche || m.arrets_touches || [])),
+    toute: ms.some((m) => portee(m) === "ligne"),
+  };
 };
 // Nom d'arrêt comparable (comme côté intégration) : sans la commune entre parenthèses, sans accents ni ponctuation.
 const nomArret = (t) => String(t || "").replace(/\s*\([^)]*\)\s*$/, "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
@@ -541,9 +549,10 @@ class TransportsIdfCard extends HTMLElement {
       const pts = e.trace?.length > 1 ? e.trace : parArrets || (e.de_coord && e.vers_coord ? [e.de_coord, e.vers_coord] : null);
       if (!pts) continue;
       if (e.type === "transport") {
-        const { noms, toute } = interruptions(e.messages);
-        const touches = (e.points_arret || []).filter((x) => noms.has(x[0])).map((x) => [x[1], x[2]]);
-        segments.push({ points: pts, couleur: e.couleur || null, interrompu: toute, touches });
+        const { noms, coupe, toute } = interruptions(e.messages);
+        const touches = (e.points_arret || []).filter((x) => coupe.has(nomArret(x[0]))).map((x) => [x[1], x[2]]);
+        const nonDesservis = (e.points_arret || []).filter((x) => noms.has(nomArret(x[0])) && !coupe.has(nomArret(x[0]))).map((x) => ({ nom: x[3] || x[0], pos: [x[1], x[2]] }));
+        segments.push({ points: pts, couleur: e.couleur || null, interrompu: toute, touches, nonDesservis });
         correspondances.push(pts[0]);
       } else segments.push({ points: pts, pied: true });
     }
@@ -702,6 +711,14 @@ class TransportsIdfCard extends HTMLElement {
     coupe(p.gris);
   }
 
+  // Arrêt non desservi : rond gris en pointillés, le nom au survol.
+  _arretNonDesservi(L, c, pos, nom) {
+    const gris = this._sombre() ? "#b0b0b0" : "#616161";
+    L.circleMarker(pos, { radius: 5, color: gris, weight: 2, fillColor: this._sombre() ? "#333" : "#e0e0e0", fillOpacity: 1, dashArray: "2 2" })
+      .bindTooltip(`${echapper(nom)} · non desservi`, { direction: "top" })
+      .addTo(c.carte);
+  }
+
   async _creerCarte(cle, c) {
     let L, css;
     try {
@@ -731,12 +748,13 @@ class TransportsIdfCard extends HTMLElement {
       for (const x of d.segments) {
         if (x.pied) L.polyline(x.points, { color: gris, weight: 4, opacity: 0.9, dashArray: "1 8", lineCap: "round" }).addTo(c.carte);
         else this._tracer(L, c, x.points, x.couleur || couleur, x.interrompu, x.touches, 6);
+        for (const a of x.nonDesservis || []) this._arretNonDesservi(L, c, a.pos, a.nom);
       }
       for (const p of d.points || []) L.circleMarker(p, { radius: 5, color: gris, weight: 2, fillColor: "#fff", fillOpacity: 1 }).addTo(c.carte);
     } else if (d.lignes) {
       // Plan d'une ligne : son tracé, ses arrêts ; ceux cités par un message en rouge.
       points = d.lignes.flat();
-      const touches = (d.arrets || []).filter((a) => d.touches?.has(nomArret(a.nom))).map((a) => [a.lat, a.lon]);
+      const touches = (d.arrets || []).filter((a) => d.coupe?.has(nomArret(a.nom))).map((a) => [a.lat, a.lon]);
       for (const t of d.lignes) this._tracer(L, c, t, d.couleur || couleur, d.toute, touches, 5, true);
       for (const a of d.arrets || []) {
         const touche = d.toute || d.touches?.has(nomArret(a.nom));
@@ -926,8 +944,8 @@ class TransportsIdfCard extends HTMLElement {
     }
     if (!plan) return `<div class="sous">Chargement du plan…</div>`;
     if (plan.erreur || (!plan.traces?.length && !plan.arrets?.length)) return `<div class="sous">Plan indisponible.</div>`;
-    const { noms, toute } = interruptions(ligne.perturbations);
-    this._donneesCartes.set(cle, { lignes: plan.traces || [], arrets: plan.arrets || [], couleur: ligne.couleur || plan.couleur, touches: noms, toute, b: ici });
+    const { noms, coupe, toute } = interruptions(ligne.perturbations);
+    this._donneesCartes.set(cle, { lignes: plan.traces || [], arrets: plan.arrets || [], couleur: ligne.couleur || plan.couleur, touches: noms, coupe, toute, b: ici });
     return `<div class="plan plan-ligne"><div class="carte-l" data-carte="${echapper(cle)}"></div></div>`;
   }
 

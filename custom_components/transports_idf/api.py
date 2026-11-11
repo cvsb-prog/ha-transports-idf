@@ -658,6 +658,14 @@ def cles_arret(objet: Any) -> set[str]:
     return cles
 
 
+def noms_cites(objet: Any) -> set[str]:
+    """Noms comparables d'un arrêt cité par une perturbation (objet PT ou arrêt impacté, quai ou zone)."""
+    if not isinstance(objet, dict):
+        return set()
+    sous = [objet.get(objet.get("embedded_type") or ""), objet.get("stop_point"), objet.get("stop_area")]
+    return {c[2:] for o in [objet, *sous] if isinstance(o, dict) for c in cles_arret(o) if c.startswith("n:")}
+
+
 def cles_perturbation(objet: Any) -> set[str]:
     """Clés d'un arrêt cité par une perturbation.
 
@@ -1008,13 +1016,13 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                 sections.append(section)
                 bouts = cles_arret(s.get("from")) | cles_arret(s.get("to"))
                 arrets: set[str] = set(bouts)
-                points_arret = []  # [nom comparable, lat, lon] des arrêts parcourus (portion interrompue sur la carte)
+                points_arret = []  # [nom comparable, lat, lon, nom] des arrêts parcourus (portion interrompue sur la carte)
                 for sdt in s.get("stop_date_times", []) or []:
                     arrets |= cles_arret(sdt.get("stop_point"))
                     sp = sdt.get("stop_point") or {}
                     c = sp.get("coord") or (sp.get("stop_area") or {}).get("coord") or {}
                     try:
-                        points_arret.append([_nom_arret(sp.get("name")), round(float(c["lat"]), 5), round(float(c["lon"]), 5)])
+                        points_arret.append([_nom_arret(sp.get("name")), round(float(c["lat"]), 5), round(float(c["lon"]), 5), sp.get("name")])
                     except (KeyError, TypeError, ValueError):
                         pass
                 trace, douteux = _trace(s, 120, [[p[1], p[2]] for p in points_arret])
@@ -1200,10 +1208,13 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
         gravite = d.get("severity") or {}
         ident = d.get("id") or d.get("disruption_id")
         lignes, troncon, arrets, routes, ligne_entiere = [], set(), set(), set(), False
+        noms_troncon, noms_arrets = set(), set()
         for o in d.get("impacted_objects", []) or []:
             po = o.get("pt_object") or {}
             type_ = po.get("embedded_type")
             arrets_o = set().union(*(cles_perturbation(x) for x in o.get("impacted_stops") or [])) if o.get("impacted_stops") else set()
+            # Noms des arrêts cités, pour les cartes (un quai n'est identifié que par son id ci-dessus).
+            noms_o = set().union(*(noms_cites(x) for x in o.get("impacted_stops") or []))
             if type_ == "line":
                 lignes.append(po.get("id"))
             if type_ == "route" and po.get("id"):
@@ -1214,15 +1225,20 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
                     routes |= {r.get("id") for r in section.get("routes") or [] if r.get("id")}
                     # Les quais touchés (propres à un sens) s'ils sont donnés, sinon les deux bouts du tronçon.
                     troncon |= arrets_o or (cles_arret(section.get("from")) | cles_arret(section.get("to")))
+                    bouts = noms_cites(section.get("from")) | noms_cites(section.get("to"))
+                    noms_troncon |= noms_o or bouts
                 elif arrets_o:
                     arrets |= arrets_o
+                    noms_arrets |= noms_o
                 else:
                     ligne_entiere = True
             elif type_ in ("stop_area", "stop_point"):
                 arrets |= cles_perturbation(po) | arrets_o
+                noms_arrets |= noms_o | noms_cites(po)
         if ligne_entiere and not troncon and not arrets and rattachees.get(ident):
             # Rattachée à la ligne, mais publiée sur certains arrêts seulement (ex. station non desservie).
             ligne_entiere, arrets = False, set(rattachees[ident])
+            noms_arrets |= {c[2:] for c in arrets if c.startswith("n:")}
         titre = titre or corps[:120]
         sortie.append(
             {
@@ -1241,6 +1257,8 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
                 "troncon": sorted(troncon),
                 "routes": sorted(routes),
                 "arrets": sorted(arrets),
+                "noms_troncon": sorted(noms_troncon),
+                "noms_arrets": sorted(noms_arrets),
                 "equipement": bool(_EQUIPEMENT.search(f"{titre} {corps[:200]}")),
                 "perimee": perimee_selon_texte(titre, maintenant.date()),
             }
@@ -1316,10 +1334,15 @@ def messages_affiches(perts: list[dict[str, Any]], ignorer_info: bool = True) ->
         cle = (normaliser(p.get("titre")), normaliser(p.get("message")))
         if cle in vus:
             continue
-        touches = sorted({c[2:] for c in (p.get("troncon") or []) + (p.get("arrets") or []) if c.startswith("n:")})
+        troncon = {c[2:] for c in p.get("troncon") or [] if c.startswith("n:")} | set(p.get("noms_troncon") or [])
+        arrets = {c[2:] for c in p.get("arrets") or [] if c.startswith("n:")} | set(p.get("noms_arrets") or [])
         vus[cle] = {
             "id": p.get("id"), "titre": p.get("titre"), "message": p.get("message") if p.get("message") != p.get("titre") else "",
-            "niveau": niveau, "fin": p.get("fin"), "arrets_touches": touches,
+            "niveau": niveau, "fin": p.get("fin"),
+            # portee : ligne (toute la ligne coupée), troncon (coupée entre des arrêts), arrets (arrêts non desservis, la ligne roule).
+            "portee": p.get("portee") or "ligne",
+            "troncon_touche": sorted(troncon),
+            "arrets_touches": sorted(troncon | arrets),
         }
     return sorted(vus.values(), key=lambda m: ordre.get(m["niveau"], 3))
 

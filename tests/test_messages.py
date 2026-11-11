@@ -371,3 +371,30 @@ async def test_workday_pas_encore_charge(hass: HomeAssistant):
     hass.states.async_set("binary_sensor.workday_sensor", "on", {"workdays": ["mon", "tue", "wed", "thu", "fri"]})
     await jours_feries(hass, date(2026, 11, 9))
     assert appels
+
+
+def test_arrets_non_desservis_ne_coupent_pas_la_ligne():
+    """Arrêts non desservis (quais d'un sens) : portée « arrets » avec leurs noms ; un tronçon coupé : portée « troncon »."""
+    from custom_components.transports_idf.api import analyser_perturbations, messages_affiches
+
+    def quai(ident, nom):
+        return {"stop_point": {"id": ident, "name": nom}}
+
+    donnees = {"disruptions": [
+        {"id": "nd", "status": "active", "severity": {"name": "bloquante", "effect": "NO_SERVICE"},
+         "messages": [{"text": "Bus 192 : arrêts non desservis", "channel": {"types": ["title"]}}],
+         "impacted_objects": [{"pt_object": {"id": "line:IDFM:C01192", "embedded_type": "line"},
+                               "impacted_stops": [quai("stop_point:IDFM:1", "Les Blagis"), quai("stop_point:IDFM:2", "Parc de Sceaux")]}]},
+        {"id": "tr", "status": "active", "severity": {"name": "bloquante", "effect": "NO_SERVICE"},
+         "messages": [{"text": "RER B : trafic interrompu entre deux gares", "channel": {"types": ["title"]}}],
+         "impacted_objects": [{"pt_object": {"id": "line:IDFM:C01743", "embedded_type": "line"},
+                               "impacted_section": {"from": {"embedded_type": "stop_area", "stop_area": {"id": "stop_area:IDFM:9", "name": "Bourg-la-Reine"}},
+                                                    "to": {"embedded_type": "stop_area", "stop_area": {"id": "stop_area:IDFM:8", "name": "Denfert-Rochereau"}}}}]},
+    ]}
+    perts = {p["id"]: p for p in analyser_perturbations(donnees)}
+    assert perts["nd"]["portee"] == "arrets" and perts["nd"]["noms_arrets"] == ["les blagis", "parc de sceaux"]
+    assert perts["tr"]["portee"] == "troncon" and perts["tr"]["noms_troncon"] == ["bourg la reine", "denfert rochereau"]
+    msgs = {m["id"]: m for m in messages_affiches(list(perts.values()))}
+    # Avant : aucun nom pour des quais → toute la ligne en pointillés. Maintenant : arrêts marqués, ligne pleine.
+    assert msgs["nd"]["portee"] == "arrets" and msgs["nd"]["troncon_touche"] == [] and msgs["nd"]["arrets_touches"] == ["les blagis", "parc de sceaux"]
+    assert msgs["tr"]["portee"] == "troncon" and msgs["tr"]["troncon_touche"] == ["bourg la reine", "denfert rochereau"]
