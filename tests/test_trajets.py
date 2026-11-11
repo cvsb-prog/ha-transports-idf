@@ -57,7 +57,10 @@ async def test_analyse_etapes():
     assert it["etapes"][1]["depart"] == "8 h 07" and it["etapes"][1]["de"] == "Les Blagis"
 
 
-async def test_direct_nominal_et_alertes(hass: HomeAssistant, aioclient_mock):
+async def test_direct_nominal_et_alertes(hass: HomeAssistant, aioclient_mock, freezer):
+    # Heure fixe (7 h à Paris, un vendredi ouvré) : sinon, le soir, le trajet testé passe minuit.
+    await hass.config.async_set_time_zone("Europe/Paris")
+    freezer.move_to("2026-11-06 06:00:00+00:00")
     hass.states.async_set("zone.home", "0", {"latitude": 48.7800, "longitude": 2.3170})
     m = dt_util.now().replace(tzinfo=None, second=0, microsecond=0)
     mocks(aioclient_mock, itin(m, 10, 42, 12, 50), perturbe=True)
@@ -88,7 +91,10 @@ async def test_direct_nominal_et_alertes(hass: HomeAssistant, aioclient_mock):
     assert [ev.data["type"] for ev in evenements] == ["perturbation", "retour_normal"]
 
 
-async def test_rappel_arrivee(hass: HomeAssistant, aioclient_mock):
+async def test_rappel_arrivee(hass: HomeAssistant, aioclient_mock, freezer):
+    # Heure fixe (7 h à Paris, un vendredi ouvré) : sinon, le soir, le trajet testé passe minuit.
+    await hass.config.async_set_time_zone("Europe/Paris")
+    freezer.move_to("2026-11-06 06:00:00+00:00")
     hass.states.async_set("zone.home", "0", {"latitude": 48.7800, "longitude": 2.3170})
     m = dt_util.now().replace(tzinfo=None, second=0, microsecond=0)
     mocks(aioclient_mock, itin(m, 10, 42, 15, 50))
