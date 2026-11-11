@@ -127,64 +127,17 @@
       "step": {
         "user": {
           "title": "Ajouter un trajet",
-          "description": "Un trajet habituel d'une personne. Les itinéraires affichés sont toujours calculés au départ de maintenant ; l'heure sert au rappel « pars à … » et au trajet habituel. Le suivi commence 1 h avant le départ habituel.",
+          "description": "Un trajet habituel d'une personne : un départ, des étapes si besoin, une destination. Tu règles les horaires de chaque point juste après.",
           "data": {
             "nom": "Nom du trajet",
             "personne": "Personne",
+            "jours": "Jours du trajet",
             "recherche_depart": "Départ (adresse, arrêt) — vide : la maison",
-            "recherche": "Destination (arrêt, adresse, lieu)",
-            "type_heure": "Quand",
-            "heure_depart": "Heure",
-            "jours": "Jours du trajet",
-            "detour_mode": "Détour : comment tu y vas",
-            "detour_duree": "Détour : temps pour y aller",
-            "detour_pause": "Détour : temps sur place",
-            "detour_heure": "Détour : heure d'arrivée imposée",
-            "detour_jours": "Détour : jours concernés",
-            "supprimer_detour": "Supprimer le détour",
-            "recherche_detour": "Détour avant les transports (adresse, lieu) — facultatif"
+            "recherche": "Destination (arrêt, adresse, lieu)"
           },
           "data_description": {
             "jours": "Le trajet est suivi ces jours-là (rappel, alertes, trajet habituel). « Inclure les jours fériés » coché : aussi les jours fériés ; sinon ils sont sautés.",
-            "recherche_detour": "Ex. une crèche ou une boulangerie : tu y passes avant de prendre les transports, certains jours.",
             "recherche_depart": "Tu choisiras ensuite dans une liste : la maison en premier, tes autres zones, puis les lieux trouvés."
-          }
-        },
-        "destination": {
-          "title": "Choisir la destination",
-          "data": {
-            "destination": "Destination"
-          }
-        },
-        "itineraire": {
-          "title": "Itinéraire habituel",
-          "description": "Itinéraires vers {destination} au prochain jour ouvré (départ → arrivée). Ses lignes seront surveillées et son heure de départ sert de départ habituel. « Autre » : indique toi-même les lignes.",
-          "data": {
-            "itineraire": "Itinéraire"
-          }
-        },
-        "reconfigure": {
-          "title": "Modifier le trajet",
-          "description": "Départ : {depart}\nDestination : {destination}\nItinéraire habituel : {itineraire}",
-          "data": {
-            "nom": "Nom du trajet",
-            "personne": "Personne",
-            "recherche_depart": "Nouveau départ (adresse, arrêt) — vide : inchangé",
-            "type_heure": "Quand",
-            "heure_depart": "Heure",
-            "jours": "Jours du trajet",
-            "detour_mode": "Détour : comment tu y vas",
-            "detour_duree": "Détour : temps pour y aller",
-            "detour_pause": "Détour : temps sur place",
-            "detour_heure": "Détour : heure d'arrivée imposée",
-            "detour_jours": "Détour : jours concernés",
-            "supprimer_detour": "Supprimer le détour",
-            "recherche_detour": "Détour avant les transports (adresse, lieu) — facultatif",
-            "recalculer": "Choisir un autre itinéraire habituel"
-          },
-          "data_description": {
-            "jours": "Le trajet est suivi ces jours-là (rappel, alertes, trajet habituel). « Inclure les jours fériés » coché : aussi les jours fériés ; sinon ils sont sautés.",
-            "recherche_detour": "Ex. une crèche ou une boulangerie : tu y passes avant de prendre les transports, certains jours."
           }
         },
         "depart": {
@@ -193,29 +146,140 @@
             "depart": "Départ"
           }
         },
-        "detour": {
-          "title": "Détour",
+        "destination": {
+          "title": "Choisir la destination",
           "data": {
-            "lieu": "Lieu du détour",
-            "detour_mode": "Comment tu y vas"
+            "destination": "Destination"
           }
         },
-        "detour_reglages": {
-          "title": "Détour : {lieu}",
-          "description": "Temps pour y aller depuis le départ : {calcul}.",
+        "menu": {
+          "title": "Trajet : {nom}",
+          "description": "{resume}\n\nAjoute des étapes, règle les horaires de chaque point, puis termine.",
+          "menu_options": {
+            "ajouter": "➕ Ajouter une étape",
+            "modifier": "✏️ Modifier un point (lieu, horaires, façon d'y aller)",
+            "supprimer": "🗑️ Supprimer une étape",
+            "deplacer": "↕️ Déplacer une étape",
+            "general": "⚙️ Nom, personne, jours",
+            "terminer": "✅ Terminer"
+          }
+        },
+        "general": {
+          "title": "Nom, personne, jours",
           "data": {
-            "detour_duree": "Temps pour y aller",
-            "detour_pause": "Temps sur place",
-            "detour_heure": "Heure d'arrivée imposée (facultatif)",
-            "detour_jours": "Jours du détour"
+            "nom": "Nom du trajet",
+            "personne": "Personne",
+            "jours": "Jours du trajet"
           },
           "data_description": {
-            "detour_heure": "Ex. ouverture de la crèche : tu y arrives à cette heure, puis tu repars après le temps sur place."
+            "jours": "« Inclure les jours fériés » coché : aussi les jours fériés ; sinon ils sont sautés."
+          }
+        },
+        "ajouter": {
+          "title": "Ajouter une étape",
+          "description": "{resume}",
+          "data": {
+            "recherche": "Lieu de l'étape (adresse, arrêt, lieu)",
+            "position": "Où dans le trajet"
+          },
+          "data_description": {
+            "recherche": "Ex. une crèche, une école, une boulangerie."
+          }
+        },
+        "lieu": {
+          "title": "Choisir le lieu",
+          "data": {
+            "lieu": "Lieu"
+          }
+        },
+        "modifier": {
+          "title": "Modifier un point",
+          "description": "{resume}",
+          "data": {
+            "point": "Point"
+          }
+        },
+        "point_depart": {
+          "title": "Départ · {lieu}",
+          "description": "{resume}",
+          "data": {
+            "depart_type": "Départ",
+            "depart_debut": "Départ : début (à partir de, entre)",
+            "depart_fin": "Départ : fin (avant, entre)",
+            "recherche": "Changer de lieu (adresse, arrêt) — facultatif"
+          },
+          "data_description": {
+            "depart_type": "Ex. « À partir de 7 h 30 ». Sans contrainte, tu pars le plus tard possible."
+          }
+        },
+        "point": {
+          "title": "{point} · {lieu}",
+          "description": "{resume}\n\nDepuis {depuis}.",
+          "data": {
+            "mode": "Pour y aller",
+            "duree": "Temps pour y aller (hors transports)",
+            "arrivee_type": "Arrivée",
+            "arrivee_debut": "Arrivée : début (à partir de, entre)",
+            "arrivee_fin": "Arrivée : fin (avant, entre)",
+            "sejour": "Temps minimum sur place",
+            "depart_type": "Départ",
+            "depart_debut": "Départ : début (à partir de, entre)",
+            "depart_fin": "Départ : fin (avant, entre)",
+            "jours": "Jours de l'étape",
+            "recalculer": "Rechoisir l'itinéraire habituel de ce tronçon",
+            "recherche": "Changer de lieu (adresse, arrêt) — facultatif"
+          },
+          "data_description": {
+            "duree": "Vide : calculée par PRIM. En transports, le temps est calculé à chaque fois.",
+            "arrivee_type": "« À partir de » : si tu es en avance, tu attends. « Avant » : si c'est impossible, le retard est signalé.",
+            "depart_type": "Ex. sortie d'école entre 16 h 30 et 16 h 45.",
+            "jours": "Les autres jours, le trajet est calculé sans cette étape.",
+            "mode": "En transports : si PRIM juge que c'est plus rapide à pied, l'itinéraire à pied est proposé (🚶)."
+          }
+        },
+        "point_destination": {
+          "title": "Destination · {lieu}",
+          "description": "{resume}\n\nDepuis {depuis}.",
+          "data": {
+            "mode": "Pour y aller",
+            "duree": "Temps pour y aller (hors transports)",
+            "arrivee_type": "Arrivée",
+            "arrivee_debut": "Arrivée : début (à partir de, entre)",
+            "arrivee_fin": "Arrivée : fin (avant, entre)",
+            "recalculer": "Rechoisir l'itinéraire habituel de ce tronçon",
+            "recherche": "Changer de lieu (adresse, arrêt) — facultatif"
+          },
+          "data_description": {
+            "arrivee_type": "Ex. « Avant 9 h 00 » ou « Entre 8 h 45 et 9 h 00 ». « À partir de » : si tu es en avance, tu attends.",
+            "duree": "Vide : calculée par PRIM. En transports, le temps est calculé à chaque fois.",
+            "mode": "En transports : si PRIM juge que c'est plus rapide à pied, l'itinéraire à pied est proposé (🚶)."
+          }
+        },
+        "supprimer": {
+          "title": "Supprimer une étape",
+          "description": "{resume}",
+          "data": {
+            "point": "Étape"
+          }
+        },
+        "deplacer": {
+          "title": "Déplacer une étape",
+          "description": "{resume}",
+          "data": {
+            "point": "Étape",
+            "sens": "Sens"
+          }
+        },
+        "itineraire": {
+          "title": "Itinéraire habituel · {troncon}",
+          "description": "De {depuis} à {destination}, au prochain jour ouvré (départ → arrivée). Ses lignes seront surveillées. « Autre » : indique toi-même les lignes.",
+          "data": {
+            "itineraire": "Itinéraire"
           }
         },
         "itineraire_autre": {
           "title": "Mon itinéraire",
-          "description": "Lignes à emprunter vers {destination}, dans l'ordre, séparées par des virgules.",
+          "description": "Lignes à emprunter de {depuis} à {destination}, dans l'ordre, séparées par des virgules.",
           "data": {
             "lignes": "Lignes",
             "correspondance": "Arrêt de correspondance — facultatif"
@@ -231,7 +295,10 @@
         "injoignable": "PRIM ne répond pas. Réessaie dans un instant.",
         "aucun_resultat": "Aucun lieu trouvé. Essaie un autre nom.",
         "ligne_inconnue": "Ligne introuvable : vérifie son nom (ex. RER C, M13, T6, 192).",
-        "aucun_itineraire_lignes": "Aucun itinéraire avec ces lignes à cette heure."
+        "aucun_itineraire_lignes": "Aucun itinéraire avec ces lignes à cette heure.",
+        "heure_manquante": "Indique l'heure.",
+        "fenetre_inversee": "La fin doit être après le début.",
+        "deja_au_bout": "L'étape est déjà au bout : elle ne peut pas passer avant le départ ni après la destination."
       },
       "abort": {
         "aucun_itineraire": "Aucun itinéraire en transports trouvé pour ce trajet.",

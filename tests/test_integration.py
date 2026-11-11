@@ -117,12 +117,13 @@ async def test_parcours_complet(hass: HomeAssistant, aioclient_mock):
 
     # 3. Trajet
     r = await hass.config_entries.subentries.async_init((entry.entry_id, "trajet"), context={"source": "user"})
-    r = await hass.config_entries.subentries.async_configure(
-        r["flow_id"],
-        {"nom": "Travail", "personne": "person.alex", "recherche": "denfert", "heure_depart": "08:00:00"},
-    )
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"nom": "Travail", "personne": "person.alex", "recherche": "denfert"})
     assert r["step_id"] == "destination"
     r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"destination": "stop_area:IDFM:70000"})
+    assert r["step_id"] == "point_destination"
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"mode": "transports", "arrivee_type": "avant", "arrivee_fin": "09:00:00"})
+    assert r["type"] is FlowResultType.MENU and "avant 9 h 00" in r["description_placeholders"]["resume"]
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"next_step_id": "terminer"})
     assert r["step_id"] == "itineraire"
     assert "Bus 192 → RER B · 32 min · 1 corresp." in r["data_schema"].schema["itineraire"].config["options"][0]["label"]
     r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"itineraire": "0"})

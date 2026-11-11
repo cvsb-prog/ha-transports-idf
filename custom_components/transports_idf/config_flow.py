@@ -51,6 +51,18 @@ from .api import (
     refs_candidates,
     titre_ligne,
 )
+from .points import (
+    APRES,
+    AUCUNE,
+    AVANT,
+    ENTRE,
+    T_POINTS,
+    cles_anciennes,
+    fenetre,
+    point,
+    points_du_trajet,
+    resume_trajet,
+)
 from .const import (
     A_COMMUNE,
     A_LAT,
@@ -86,13 +98,6 @@ from .const import (
     T_DEPART_HABITUEL,
     T_DEST_ID,
     T_DEST_NOM,
-    T_DET_DUREE,
-    T_DET_HEURE,
-    T_DET_ID,
-    T_DET_JOURS,
-    T_DET_MODE,
-    T_DET_NOM,
-    T_DET_PAUSE,
     T_DUREE,
     T_ETAPES,
     T_HEURE,
@@ -444,7 +449,6 @@ MODES = [
     SelectOptionDict(value="voiture", label="🚗 En voiture"),
     SelectOptionDict(value="transports", label="🚌 En transports"),
 ]
-TYPES_HEURE = [SelectOptionDict(value="depart", label="Partir à"), SelectOptionDict(value="arrivee", label="Arriver à")]
 VITESSES = {"marche": 1.2, "velo": 4.2, "voiture": 6.0}  # m/s, estimation de secours (ville)
 AUTRE = "autre"
 PREFIXES_MODE = {
@@ -484,56 +488,86 @@ def choisir_ligne(texte: str, trouvees: list[dict[str, Any]]) -> dict[str, Any] 
     return candidates[0] if candidates else None
 
 
+FENETRES = [
+    SelectOptionDict(value=AUCUNE, label="Pas de contrainte"),
+    SelectOptionDict(value=APRES, label="À partir de"),
+    SelectOptionDict(value=AVANT, label="Avant"),
+    SelectOptionDict(value=ENTRE, label="Entre"),
+]
+LIBRE = "libre"  # itinéraire du tronçon : le plus rapide à chaque fois
+CHAMPS_ANCIENS = (
+    T_ORIGINE, T_ORIGINE_ID, T_ORIGINE_NOM, T_DEST_ID, T_DEST_NOM, T_HEURE, T_TYPE_HEURE, T_DEPART_HABITUEL,
+    T_ARRIVEE_HABITUELLE, T_DUREE, T_SECTIONS, T_RESUME, T_ETAPES, T_AVANCE,
+)
+
+
+def _nom_point(rang: int, total: int) -> str:
+    return "Départ" if rang == 0 else ("Destination" if rang == total - 1 else f"Étape {rang}")
+
+
 class TrajetFlow(_Base):
-    """Ajouter / modifier un trajet habituel, propre à une personne."""
+    """Ajouter / modifier un trajet habituel : départ, étapes, destination (menu en boucle, résumé en tête)."""
 
     def __init__(self) -> None:
-        self._saisie: dict[str, Any] = {}
-        self._lieux: list[dict[str, Any]] = []
-        self._dest: dict[str, Any] = {}
-        self._itineraires: list[dict[str, Any]] = []
-        self._calcules = False  # itinéraires déjà calculés (choix « Autre » : ne pas recalculer)
-        self._origine: dict[str, Any] | None = None  # lieu Navitia de départ (sinon une zone)
-        self._zone: str | None = None  # zone de départ
+        self._general: dict[str, Any] = {}  # nom, personne, jours
+        self._points: list[dict[str, Any]] = []
+        self._lieux: list[dict[str, Any]] = []  # résultats de la dernière recherche
         self._lieux_depart: list[dict[str, Any]] = []
-        self._lieux_detour: list[dict[str, Any]] = []
-        self._detour: dict[str, Any] = {}  # réglages du détour en cours de saisie
-        self._lieu_detour: dict[str, Any] | None = None
-        self._apres_depart: str = "destination"
+        self._rang = 0  # point en cours de modification
+        self._apres_lieu = "modifier"  # que faire du lieu choisi : « ajouter » (nouvelle étape) ou « modifier »
+        self._a_choisir: set[int] = set()  # tronçons dont l'itinéraire habituel est à (re)choisir
+        self._itineraires: list[dict[str, Any]] = []
+        self._calcules = False
 
-    # ---- Formulaire principal ---------------------------------------------------
-    def _schema_trajet(self, d: dict[str, Any], creation: bool) -> vol.Schema:
-        champs: dict[Any, Any] = {
-            vol.Required(T_NOM, default=d.get(T_NOM, "")): TextSelector(),
-            vol.Required(T_PERSONNE, default=d.get(T_PERSONNE)) if d.get(T_PERSONNE) else vol.Required(T_PERSONNE): EntitySelector(EntitySelectorConfig(domain="person")),
-            vol.Optional("recherche_depart"): TextSelector(),
-        }
-        if creation:
-            champs[vol.Required("recherche")] = TextSelector()
-        champs[vol.Required(T_TYPE_HEURE, default=d.get(T_TYPE_HEURE, "arrivee"))] = _liste(TYPES_HEURE)
-        champs[vol.Required(T_HEURE, default=d.get(T_HEURE, "09:00:00"))] = TimeSelector()
-        champs[vol.Required(T_JOURS, default=d.get(T_JOURS) or JOURS_DEFAUT)] = _jours(True)
-        if not d.get(T_DET_ID):
-            champs[vol.Optional("recherche_detour")] = TextSelector()
-        else:
-            champs[vol.Required(T_DET_MODE, default=d.get(T_DET_MODE, "marche"))] = _liste(MODES)
-            champs[vol.Required(T_DET_DUREE, default=d.get(T_DET_DUREE, 10))] = _nombre(0, 120, 1, "min")
-            champs[vol.Required(T_DET_PAUSE, default=d.get(T_DET_PAUSE, 5))] = _nombre(0, 120, 1, "min")
-            champs[vol.Optional(T_DET_HEURE, description={"suggested_value": d.get(T_DET_HEURE)})] = TimeSelector()
-            champs[vol.Required(T_DET_JOURS, default=d.get(T_DET_JOURS) or JOURS_DEFAUT)] = _jours()
-            champs[vol.Optional("supprimer_detour", default=False)] = BooleanSelector()
-        if not creation:
-            champs[vol.Optional("recalculer", default=False)] = BooleanSelector()
-        return vol.Schema(champs)
-
+    # ---- Outils ---------------------------------------------------------------------
     def _zone_defaut(self) -> str:
         return self._get_entry().data.get(CONF_ZONE, "zone.home")
 
+    def _nom_zone(self, zone: str) -> str:
+        etat = self.hass.states.get(zone)
+        return etat.name if etat else "Maison"
+
+    def _point_lieu(self, l: dict[str, Any], **reglages: Any) -> dict[str, Any]:
+        return point(_libelle_lieu(l), id=l["id"], lat=l.get("lat"), lon=l.get("lon"), **reglages)
+
+    def _navitia(self, p: dict[str, Any]) -> str:
+        """Identifiant Navitia d'un point (lieu, ou coordonnées de sa zone)."""
+        if p.get("id"):
+            return p["id"]
+        lat, lon = coordonnees_zone(self.hass, p.get("zone") or self._zone_defaut())
+        return f"{lon};{lat}"
+
+    def _coord(self, p: dict[str, Any]) -> tuple[float, float]:
+        if p.get("lat") is not None:
+            return p["lat"], p["lon"]
+        return coordonnees_zone(self.hass, p.get("zone") or self._zone_defaut())
+
+    def _resume(self) -> str:
+        return resume_trajet(self._points)
+
+    def _toucher(self, *rangs: int) -> None:
+        """Les tronçons arrivant à ces points ont changé : itinéraire habituel à rechoisir."""
+        for r in rangs:
+            if 0 < r < len(self._points):
+                p = self._points[r]
+                p["sections"], p["resume"] = [], ""
+                p.pop(LIBRE, None)
+                p.pop("habituel", None)
+                if (p.get("mode") or "transports") == "transports":
+                    self._a_choisir.add(r)
+
+    def _options_points(self, etapes_seules: bool = False) -> list[SelectOptionDict]:
+        n = len(self._points)
+        rangs = range(1, n - 1) if etapes_seules else range(n)
+        return [SelectOptionDict(value=str(r), label=f"{_nom_point(r, n)} · {self._points[r]['nom']}") for r in rangs]
+
+    # ---- Création : nom, personne, départ, destination ----------------------------------
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
         erreurs: dict[str, str] = {}
         if user_input is not None:
-            self._saisie = dict(user_input)
-            self._origine, self._zone = None, self._zone_defaut()
+            self._general = {k: user_input[k] for k in (T_NOM, T_PERSONNE, T_JOURS)}
+            maison = self._zone_defaut()
+            self._points = [point(self._nom_zone(maison), zone=maison)]
             texte_depart = (user_input.get("recherche_depart") or "").strip()
             if texte_depart:
                 self._lieux_depart, erreur = await self._chercher(texte_depart, TYPES_DESTINATION)
@@ -545,17 +579,17 @@ class TrajetFlow(_Base):
                 self._lieux, erreur = await self._chercher(user_input["recherche"], TYPES_DESTINATION)
                 if erreur:
                     erreurs["recherche"] = erreur
-            texte_detour = (user_input.get("recherche_detour") or "").strip()
-            if not erreurs and texte_detour:
-                self._lieux_detour, erreur = await self._chercher(texte_detour, TYPES_DESTINATION)
-                if erreur:
-                    erreurs["recherche_detour"] = erreur
             if not erreurs:
-                self._apres_depart = "destination"
                 return await (self.async_step_depart() if texte_depart else self.async_step_destination())
-        return self.async_show_form(step_id="user", data_schema=self._schema_trajet(user_input or {}, True), errors=erreurs)
+        schema = vol.Schema({
+            vol.Required(T_NOM): TextSelector(),
+            vol.Required(T_PERSONNE): EntitySelector(EntitySelectorConfig(domain="person")),
+            vol.Required(T_JOURS, default=JOURS_DEFAUT): _jours(True),
+            vol.Optional("recherche_depart"): TextSelector(),
+            vol.Required("recherche"): TextSelector(),
+        })
+        return self.async_show_form(step_id="user", data_schema=self.add_suggested_values_to_schema(schema, user_input or {}), errors=erreurs)
 
-    # ---- Lieux --------------------------------------------------------------------
     def _options_depart(self) -> list[SelectOptionDict]:
         """La maison d'abord, puis les autres zones de Home Assistant, puis les lieux trouvés."""
         maison = self._zone_defaut()
@@ -572,137 +606,322 @@ class TrajetFlow(_Base):
     async def async_step_depart(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
         if user_input is not None:
             choix = user_input["depart"]
+            ancien = self._points[0]
             if choix.startswith("zone|"):
-                self._origine, self._zone = None, choix[5:]
+                nouveau = point(self._nom_zone(choix[5:]), zone=choix[5:])
             else:
-                self._origine, self._zone = next(l for l in self._lieux_depart if l["id"] == choix), self._zone_defaut()
-            if self._apres_depart == "itineraire":
-                return await self.async_step_itineraire()
-            if self._apres_depart == "destination_detour":
-                return await self.async_step_detour()
-            return await self.async_step_destination()
+                nouveau = self._point_lieu(next(l for l in self._lieux_depart if l["id"] == choix), zone=self._zone_defaut())
+            nouveau["depart"] = ancien.get("depart") or fenetre()
+            self._points[0] = nouveau
+            if len(self._points) < 2:
+                return await self.async_step_destination()
+            self._toucher(1)
+            return await self.async_step_menu()
         options = self._options_depart()
         defaut = _option_lieu(self._lieux_depart[0])["value"] if self._lieux_depart else options[0]["value"]
         return self.async_show_form(step_id="depart", data_schema=vol.Schema({vol.Required("depart", default=defaut): _liste(options)}))
 
-    def _depuis(self) -> str:
-        if self._origine:
-            return self._origine["id"]
-        lat, lon = coordonnees_zone(self.hass, self._zone or self._zone_defaut())
-        return f"{lon};{lat}"
-
     async def async_step_destination(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
         if user_input is not None:
-            self._dest = next(l for l in self._lieux if l["id"] == user_input["destination"])
-            return await (self.async_step_detour() if self._lieux_detour else self.async_step_itineraire())
+            self._points.append(self._point_lieu(next(l for l in self._lieux if l["id"] == user_input["destination"])))
+            self._a_choisir.add(1)
+            self._rang = 1
+            return await self.async_step_point()  # contrainte d'arrivée, façon d'y aller
         options = [_option_lieu(l) for l in self._lieux]
         return self.async_show_form(step_id="destination", data_schema=vol.Schema({vol.Required("destination"): _liste(options)}))
 
-    # ---- Détour -------------------------------------------------------------------
-    async def async_step_detour(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
-        """Détour avant les transports : lieu et façon d'y aller."""
-        if user_input is not None:
-            self._lieu_detour = next(l for l in self._lieux_detour if l["id"] == user_input["lieu"])
-            self._detour = {T_DET_ID: self._lieu_detour["id"], T_DET_NOM: _libelle_lieu(self._lieu_detour), T_DET_MODE: user_input[T_DET_MODE]}
-            return await self.async_step_detour_reglages()
-        options = [_option_lieu(l) for l in self._lieux_detour]
-        schema = vol.Schema({vol.Required("lieu"): _liste(options), vol.Required(T_DET_MODE, default="marche"): _liste(MODES)})
-        return self.async_show_form(step_id="detour", data_schema=schema)
+    # ---- Menu -----------------------------------------------------------------------
+    async def async_step_menu(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        options = ["ajouter", "modifier"]
+        if len(self._points) > 2:
+            options.append("supprimer")
+        if len(self._points) > 3:  # au moins deux étapes à intervertir
+            options.append("deplacer")
+        options += ["general", "terminer"]
+        return self.async_show_menu(step_id="menu", menu_options=options, description_placeholders={"resume": self._resume(), "nom": self._general.get(T_NOM, "")})
 
-    async def _duree_detour(self) -> tuple[int, bool]:
-        """Minutes pour aller du départ au détour (calculées si possible), et si c'est un calcul PRIM."""
-        mode = self._detour[T_DET_MODE]
-        if mode == "transports":
-            return 0, False
+    async def async_step_general(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        if user_input is not None:
+            self._general.update(user_input)
+            return await self.async_step_menu()
+        g = self._general
+        schema = vol.Schema({
+            vol.Required(T_NOM, default=g.get(T_NOM, "")): TextSelector(),
+            vol.Required(T_PERSONNE, default=g.get(T_PERSONNE)): EntitySelector(EntitySelectorConfig(domain="person")),
+            vol.Required(T_JOURS, default=g.get(T_JOURS) or JOURS_DEFAUT): _jours(True),
+        })
+        return self.async_show_form(step_id="general", data_schema=schema)
+
+    # ---- Ajouter une étape ------------------------------------------------------------
+    async def async_step_ajouter(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        erreurs: dict[str, str] = {}
+        n = len(self._points)
+        if user_input is not None:
+            self._lieux, erreur = await self._chercher(user_input["recherche"], TYPES_DESTINATION)
+            if erreur:
+                erreurs["recherche"] = erreur
+            else:
+                self._rang, self._apres_lieu = int(user_input["position"]) + 1, "ajouter"
+                return await self.async_step_lieu()
+        positions = [SelectOptionDict(value=str(r), label=f"Après {_nom_point(r, n).lower()} · {self._points[r]['nom']}") for r in range(n - 1)]
+        schema = vol.Schema({vol.Required("recherche"): TextSelector(), vol.Required("position", default=str(n - 2)): _liste(positions)})
+        return self.async_show_form(
+            step_id="ajouter", data_schema=self.add_suggested_values_to_schema(schema, user_input or {}), errors=erreurs,
+            description_placeholders={"resume": self._resume()},
+        )
+
+    async def async_step_lieu(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        """Choix du lieu trouvé : nouvelle étape, ou nouveau lieu d'un point existant."""
+        if user_input is not None:
+            l = next(x for x in self._lieux if x["id"] == user_input["lieu"])
+            r = self._rang
+            if self._apres_lieu == "ajouter":
+                self._points.insert(r, self._point_lieu(l, mode="transports", jours=None))
+                self._toucher(r, r + 1)
+            else:
+                ancien = self._points[r]
+                nouveau = self._point_lieu(l)
+                for k in ("mode", "duree", "sejour", "jours", "arrivee", "depart"):
+                    nouveau[k] = ancien.get(k)
+                if r == 0:
+                    nouveau["zone"] = self._zone_defaut()
+                self._points[r] = nouveau
+                self._toucher(r, r + 1)
+            return await self.async_step_point()
+        options = [_option_lieu(l) for l in self._lieux]
+        return self.async_show_form(step_id="lieu", data_schema=vol.Schema({vol.Required("lieu"): _liste(options)}))
+
+    # ---- Modifier un point --------------------------------------------------------------
+    async def async_step_modifier(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        if user_input is not None:
+            self._rang = int(user_input["point"])
+            return await self.async_step_point()
+        schema = vol.Schema({vol.Required("point"): _liste(self._options_points())})
+        return self.async_show_form(step_id="modifier", data_schema=schema, description_placeholders={"resume": self._resume()})
+
+    def _schema_point(self, p: dict[str, Any], r: int, n: int) -> vol.Schema:
+        champs: dict[Any, Any] = {}
+
+        def fenetre_champs(cle: str) -> None:
+            f = p.get(cle) or fenetre()
+            champs[vol.Required(f"{cle}_type", default=f["type"])] = _liste(FENETRES)
+            champs[vol.Optional(f"{cle}_debut", description={"suggested_value": f.get("debut")})] = TimeSelector()
+            champs[vol.Optional(f"{cle}_fin", description={"suggested_value": f.get("fin")})] = TimeSelector()
+
+        if r > 0:
+            champs[vol.Required("mode", default=p.get("mode") or "transports")] = _liste(MODES)
+            champs[vol.Optional("duree", description={"suggested_value": p.get("duree")})] = _nombre(0, 180, 1, "min")
+            fenetre_champs("arrivee")
+        if 0 < r < n - 1:
+            champs[vol.Required("sejour", default=p.get("sejour") or 0)] = _nombre(0, 600, 1, "min")
+        if r < n - 1:
+            fenetre_champs("depart")
+        if 0 < r < n - 1:
+            jours = p.get("jours")
+            if jours is None:
+                jours = [j for j in (self._general.get(T_JOURS) or JOURS_DEFAUT) if j != JOUR_FERIE]
+            champs[vol.Required("jours", default=jours)] = _jours()
+        if r > 0 and (p.get("resume") or p.get(LIBRE)):
+            champs[vol.Optional("recalculer", default=False)] = BooleanSelector()
+        champs[vol.Optional("recherche")] = TextSelector()
+        return vol.Schema(champs)
+
+    @staticmethod
+    def _lire_fenetre(saisie: dict[str, Any], cle: str, erreurs: dict[str, str]) -> dict[str, Any] | None:
+        if f"{cle}_type" not in saisie:
+            return None
+        t, debut, fin = saisie[f"{cle}_type"], saisie.get(f"{cle}_debut"), saisie.get(f"{cle}_fin")
+        if t in (APRES, ENTRE) and not debut:
+            erreurs[f"{cle}_debut"] = "heure_manquante"
+        if t in (AVANT, ENTRE) and not fin:
+            erreurs[f"{cle}_fin"] = "heure_manquante"
+        if t == ENTRE and debut and fin and debut > fin:
+            erreurs[f"{cle}_fin"] = "fenetre_inversee"
+        return fenetre(t, debut, fin)
+
+    async def _duree_estimee(self, r: int, mode: str) -> int:
+        """Minutes pour aller du point précédent à ce point hors transports (PRIM, sinon à vol d'oiseau)."""
+        avant, p = self._points[r - 1], self._points[r]
         try:
-            secondes = await self.client.temps_direct(self._depuis(), self._detour[T_DET_ID], MODES_DETOUR[mode])
+            secondes = await self.client.temps_direct(self._navitia(avant), self._navitia(p), MODES_DETOUR[mode])
         except ErreurPrim:
             secondes = None
         if secondes:
-            return max(1, math.ceil(secondes / 60)), True
-        lat, lon = self._coord_depart()
-        l = self._lieu_detour or {}
-        if l.get("lat") is None:
-            return 10, False
-        metres = estimation_marche(lat, lon, l["lat"], l["lon"]) * 1.2  # estimation_marche = secondes à 1,2 m/s
-        return max(1, math.ceil(metres / VITESSES[mode] / 60)), False
+            return max(1, math.ceil(secondes / 60))
+        (la1, lo1), (la2, lo2) = self._coord(avant), self._coord(p)
+        metres = estimation_marche(la1, lo1, la2, lo2) * 1.2  # estimation_marche = secondes à 1,2 m/s
+        return max(1, math.ceil(metres / VITESSES[mode] / 60))
 
-    async def async_step_detour_reglages(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+    async def async_step_point(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        r, n = self._rang, len(self._points)
+        p = self._points[r]
+        erreurs: dict[str, str] = {}
         if user_input is not None:
-            self._detour.update(user_input)
-            self._detour.setdefault(T_DET_DUREE, 0)
-            return await self.async_step_itineraire()
-        duree, calcule = await self._duree_detour()
-        champs: dict[Any, Any] = {}
-        if self._detour[T_DET_MODE] != "transports":
-            champs[vol.Required(T_DET_DUREE, default=duree)] = _nombre(0, 120, 1, "min")
-        champs[vol.Required(T_DET_PAUSE, default=5)] = _nombre(0, 120, 1, "min")
-        champs[vol.Optional(T_DET_HEURE)] = TimeSelector()
-        jours = [j for j in (self._saisie.get(T_JOURS) or JOURS_DEFAUT) if j != JOUR_FERIE]
-        champs[vol.Required(T_DET_JOURS, default=jours)] = _jours()
-        texte = "en transports : calculé en direct à chaque fois" if self._detour[T_DET_MODE] == "transports" else (
-            f"{duree} min, {'calculé par PRIM' if calcule else 'estimé à vol d’oiseau'}"
-        )
+            arrivee = self._lire_fenetre(user_input, "arrivee", erreurs)
+            depart = self._lire_fenetre(user_input, "depart", erreurs)
+            if not erreurs:
+                ancien_mode = p.get("mode")
+                if arrivee is not None:
+                    p["arrivee"] = arrivee
+                if depart is not None:
+                    p["depart"] = depart
+                if r > 0:
+                    p["mode"] = user_input["mode"]
+                    if p["mode"] == "transports":
+                        p["duree"] = None
+                    elif user_input.get("duree") is not None and (ancien_mode == p["mode"] or user_input["duree"] != p.get("duree")):
+                        p["duree"] = int(user_input["duree"])
+                    else:  # durée vidée, ou nouveau mode sans nouvelle durée : on la calcule
+                        p["duree"] = await self._duree_estimee(r, p["mode"])
+                    if p["mode"] != ancien_mode or user_input.get("recalculer"):
+                        self._toucher(r)
+                if 0 < r < n - 1:
+                    p["sejour"] = int(user_input.get("sejour") or 0)
+                    jours = user_input.get("jours") or []
+                    tous = [j for j in (self._general.get(T_JOURS) or JOURS_DEFAUT) if j != JOUR_FERIE]
+                    p["jours"] = None if sorted(jours) == sorted(tous) else jours
+                texte = (user_input.get("recherche") or "").strip()
+                if texte:
+                    self._lieux, erreur = await self._chercher(texte, TYPES_DESTINATION)
+                    if erreur and not (r == 0 and erreur == "aucun_resultat"):
+                        erreurs["recherche"] = erreur
+                    elif r == 0:
+                        self._lieux_depart = self._lieux
+                        return await self.async_step_depart()
+                    else:
+                        self._apres_lieu = "modifier"
+                        return await self.async_step_lieu()
+                if not erreurs:
+                    return await self.async_step_menu()
+        schema = self._schema_point(p, r, n)
+        if user_input is not None:
+            schema = self.add_suggested_values_to_schema(schema, user_input)
+        avant = self._points[r - 1]["nom"] if r else ""
         return self.async_show_form(
-            step_id="detour_reglages", data_schema=vol.Schema(champs),
-            description_placeholders={"lieu": self._detour[T_DET_NOM], "calcul": texte},
+            step_id="point_depart" if r == 0 else ("point_destination" if r == n - 1 else "point"),
+            data_schema=schema, errors=erreurs,
+            description_placeholders={"point": _nom_point(r, n), "lieu": p["nom"], "depuis": avant, "resume": self._resume()},
         )
 
-    def _coord_depart(self) -> tuple[float, float]:
-        if self._origine and self._origine.get("lat") is not None:
-            return self._origine["lat"], self._origine["lon"]
-        return coordonnees_zone(self.hass, self._zone or self._zone_defaut())
+    async def async_step_point_depart(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        return await self.async_step_point(user_input)
 
-    # ---- Itinéraire habituel ------------------------------------------------------
-    def _quand(self) -> tuple[datetime, str, str]:
-        """Date, mode (arrival / departure) et départ des transports pour proposer les itinéraires."""
-        quand = prochain_jour_ouvre(dt_util.now().replace(tzinfo=None), self._saisie[T_HEURE])
-        represente = "arrival" if self._saisie.get(T_TYPE_HEURE) == "arrivee" else "departure"
-        depuis = self._depuis()
-        if self._detour.get(T_DET_ID):
-            # Les transports partent du détour : à l'heure imposée + temps sur place si elle existe.
-            depuis = self._detour[T_DET_ID]
-            if self._detour.get(T_DET_HEURE):
-                h, m, *_ = (int(x) for x in self._detour[T_DET_HEURE].split(":"))
-                quand = quand.replace(hour=h, minute=m) + timedelta(minutes=float(self._detour.get(T_DET_PAUSE) or 0))
-                represente = "departure"
-        return quand, represente, depuis
+    async def async_step_point_destination(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        return await self.async_step_point(user_input)
+
+    # ---- Supprimer, déplacer ----------------------------------------------------------------
+    async def async_step_supprimer(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        if user_input is not None:
+            r = int(user_input["point"])
+            del self._points[r]
+            self._a_choisir = {x - 1 if x > r else x for x in self._a_choisir if x != r}
+            self._toucher(r)
+            return await self.async_step_menu()
+        schema = vol.Schema({vol.Required("point"): _liste(self._options_points(True))})
+        return self.async_show_form(step_id="supprimer", data_schema=schema, description_placeholders={"resume": self._resume()})
+
+    async def async_step_deplacer(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        erreurs: dict[str, str] = {}
+        if user_input is not None:
+            r = int(user_input["point"])
+            cible = r - 1 if user_input["sens"] == "monter" else r + 1
+            if not 0 < cible < len(self._points) - 1:
+                erreurs["sens"] = "deja_au_bout"
+            else:
+                self._points[r], self._points[cible] = self._points[cible], self._points[r]
+                self._a_choisir = {cible if x == r else r if x == cible else x for x in self._a_choisir}
+                self._toucher(min(r, cible), max(r, cible), max(r, cible) + 1)
+                return await self.async_step_menu()
+        sens = [SelectOptionDict(value="monter", label="⬆️ Plus tôt dans le trajet"), SelectOptionDict(value="descendre", label="⬇️ Plus tard dans le trajet")]
+        schema = vol.Schema({vol.Required("point"): _liste(self._options_points(True)), vol.Required("sens", default="monter"): _liste(sens)})
+        return self.async_show_form(
+            step_id="deplacer", data_schema=self.add_suggested_values_to_schema(schema, user_input or {}), errors=erreurs,
+            description_placeholders={"resume": self._resume()},
+        )
+
+    # ---- Itinéraires habituels, tronçon par tronçon ---------------------------------------------
+    def _quand(self, r: int) -> tuple[datetime, str]:
+        """Date et sens (arrival / departure) pour proposer les itinéraires du tronçon arrivant au point r."""
+        p, avant = self._points[r], self._points[r - 1]
+        fa, fd = p.get("arrivee") or fenetre(), avant.get("depart") or fenetre()
+        if fa.get("fin"):
+            heure, sens = fa["fin"], "arrival"
+        elif fd.get("debut"):
+            heure, sens = fd["debut"], "departure"
+        elif fa.get("debut"):
+            heure, sens = fa["debut"], "arrival"
+        else:
+            heure, sens = "08:00:00", "departure"
+        return prochain_jour_ouvre(dt_util.now().replace(tzinfo=None), heure), sens
 
     async def _calculer(self, autorises: list[str] | None = None) -> str | None:
-        quand, represente, depuis = self._quand()
+        r = self._rang
+        quand, sens = self._quand(r)
         try:
-            its = await self.client.itineraires(depuis, self._dest["id"], quand, autorises=autorises, represente=represente)
+            its = await self.client.itineraires(self._navitia(self._points[r - 1]), self._navitia(self._points[r]), quand, autorises=autorises, represente=sens)
         except ErreurJeton:
             return "jeton_invalide"
         except ErreurPrim:
             return "injoignable"
-        self._itineraires = [i for i in its if i["sections"]]
-        return None if self._itineraires else "aucun_itineraire"
+        # Sans section en transports : PRIM conseille d'y aller à pied, on le propose tel quel.
+        self._itineraires = its
+        return None if its else "aucun_itineraire"
 
     def _options_itineraires(self) -> list[SelectOptionDict]:
         sortie = []
         for n, i in enumerate(self._itineraires):
             horaires = f"{i['depart_h']} → {i['arrivee_h']} · " if i.get("depart_h") and i.get("arrivee_h") else ""
-            sortie.append(SelectOptionDict(value=str(n), label=horaires + i["resume"]))
+            libelle = i["resume"] if i["sections"] else f"🚶 À pied · {round((i.get('duree') or 0) / 60)} min"
+            sortie.append(SelectOptionDict(value=str(n), label=horaires + libelle))
+        sortie.append(SelectOptionDict(value=LIBRE, label="⚡ Pas d'habitude : le plus rapide à chaque fois"))
         sortie.append(SelectOptionDict(value=AUTRE, label="✏️ Autre : je choisis mes lignes"))
         return sortie
 
+    async def async_step_terminer(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        """Itinéraire habituel des tronçons en transports qui n'en ont pas encore, puis enregistrement."""
+        a_faire = sorted(r for r in self._a_choisir if 0 < r < len(self._points) and (self._points[r].get("mode") or "transports") == "transports")
+        self._a_choisir = set(a_faire)
+        if a_faire:
+            self._rang = a_faire[0]
+            return await self.async_step_itineraire()
+        return self._enregistrer()
+
     async def async_step_itineraire(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        r, n = self._rang, len(self._points)
         if user_input is not None:
-            if user_input["itineraire"] == AUTRE:
+            choix = user_input["itineraire"]
+            if choix == AUTRE:
                 return await self.async_step_itineraire_autre()
-            return self._enregistrer(self._itineraires[int(user_input["itineraire"])])
+            p = self._points[r]
+            if choix == LIBRE:
+                p["sections"], p["resume"], p[LIBRE] = [], "", True
+                p.pop("habituel", None)
+            else:
+                i = self._itineraires[int(choix)]
+                p["sections"] = i["sections"]
+                p["resume"] = i["resume"] if i["sections"] else "🚶 à pied"
+                p.pop(LIBRE, None)
+                p["habituel"] = {
+                    "depart": _heure_locale(i.get("depart")), "arrivee": _heure_locale(i.get("arrivee")), "duree": i.get("duree"),
+                    "etapes": [{k: v for k, v in e.items() if k not in ("depart", "arrivee", "depart_brut", "suivants", "rame", "alerte", "messages", "trace", "points_arret")} for e in i.get("etapes", [])],
+                }
+            self._a_choisir.discard(r)
+            return await self.async_step_terminer()
         if not self._calcules and (erreur := await self._calculer()) is not None:
-            return self.async_abort(reason=erreur)
+            if erreur != "aucun_itineraire":
+                return self.async_abort(reason=erreur)
+            self._itineraires = []
         self._calcules = False
-        schema = vol.Schema({vol.Required("itineraire", default="0"): _liste(self._options_itineraires())})
+        schema = vol.Schema({vol.Required("itineraire", default="0" if self._itineraires else LIBRE): _liste(self._options_itineraires())})
         return self.async_show_form(
-            step_id="itineraire", data_schema=schema, description_placeholders={"destination": _libelle_lieu(self._dest)}
+            step_id="itineraire", data_schema=schema,
+            description_placeholders={"depuis": self._points[r - 1]["nom"], "destination": self._points[r]["nom"], "troncon": f"{_nom_point(r, n)}"},
         )
 
     async def async_step_itineraire_autre(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
         """Itinéraire choisi par l'utilisateur : les lignes à emprunter (dans l'ordre), et l'arrêt de correspondance."""
         erreurs: dict[str, str] = {}
+        r = self._rang
         if user_input is not None:
             jetons = [j.strip() for j in re.split(r"[,;›>→]+|\s+puis\s+", user_input["lignes"]) if j.strip()]
             lignes: list[dict[str, Any]] = []
@@ -719,7 +938,7 @@ class TrajetFlow(_Base):
                 ids = [l["id"] for l in lignes]
                 erreur = await self._calculer(ids)
                 corresp = normaliser(user_input.get("correspondance"))
-                its = [i for i in self._itineraires if {s["ligne_id"] for s in i["sections"]} <= set(ids)]
+                its = [i for i in self._itineraires if i["sections"] and {s["ligne_id"] for s in i["sections"]} <= set(ids)]
                 its.sort(key=lambda i: [s["ligne_id"] for s in i["sections"]] != ids)  # l'ordre demandé d'abord
                 if corresp:
                     its = [i for i in its if any(corresp in normaliser(s.get("vers")) or corresp in normaliser(s.get("de")) for s in i["sections"][:-1] + i["sections"][1:])]
@@ -735,108 +954,70 @@ class TrajetFlow(_Base):
         schema = vol.Schema({vol.Required("lignes"): TextSelector(), vol.Optional("correspondance"): TextSelector()})
         return self.async_show_form(
             step_id="itineraire_autre", data_schema=self.add_suggested_values_to_schema(schema, user_input or {}), errors=erreurs,
-            description_placeholders={"destination": _libelle_lieu(self._dest)},
+            description_placeholders={"depuis": self._points[r - 1]["nom"], "destination": self._points[r]["nom"]},
         )
 
-    def _enregistrer(self, choix: dict[str, Any]) -> SubentryFlowResult:
-        jours = self._saisie.get(T_JOURS) or JOURS_DEFAUT
-        donnees = {
-            **{k: v for k, v in self._saisie.items() if k not in ("recherche", "recherche_depart", "recherche_detour", "recalculer", "supprimer_detour", T_AVANCE)},
-            T_NOM: self._saisie[T_NOM],
-            T_PERSONNE: self._saisie[T_PERSONNE],
-            T_ORIGINE: self._zone or self._zone_defaut(),
-            T_ORIGINE_ID: self._origine["id"] if self._origine else None,
-            T_ORIGINE_NOM: _libelle_lieu(self._origine) if self._origine else None,
-            T_ETAPES: [{k: v for k, v in e.items() if k not in ("depart", "arrivee", "depart_brut", "suivants", "rame", "alerte", "messages", "trace", "points_arret")} for e in choix.get("etapes", [])],
-            T_HEURE: self._saisie[T_HEURE],
-            T_TYPE_HEURE: self._saisie.get(T_TYPE_HEURE, "depart"),
-            T_DEPART_HABITUEL: self._depart_maison(choix),
-            T_JOURS: jours,
-            T_ARRIVEE_HABITUELLE: _heure_locale(choix.get("arrivee")),
-            T_DUREE: choix.get("duree"),
-            T_DEST_ID: self._dest["id"],
-            T_DEST_NOM: _libelle_lieu(self._dest),
-            T_SECTIONS: choix["sections"],
-            T_RESUME: choix["resume"],
-        }
-        donnees = {k: v for k, v in donnees.items() if not k.startswith("detour_")}
-        if self._detour.get(T_DET_ID):
-            donnees.update(self._detour)
+    # ---- Enregistrement -----------------------------------------------------------------------------
+    def _enregistrer(self) -> SubentryFlowResult:
+        points = [dict(p) for p in self._points]
         if self.source == "reconfigure":
-            sous = self._get_reconfigure_subentry()
-            return self.async_update_and_abort(self._get_entry(), sous, title=self._titre(donnees), data=donnees)
+            base = {k: v for k, v in self._get_reconfigure_subentry().data.items() if k not in CHAMPS_ANCIENS and not k.startswith("detour_")}
+        else:
+            base = {}
+        donnees = {**base, **self._general, T_POINTS: points}
+        donnees.update(self._cles_calcul(points))
+        if self.source == "reconfigure":
+            return self.async_update_and_abort(self._get_entry(), self._get_reconfigure_subentry(), title=self._titre(donnees), data=donnees)
         return self.async_create_entry(title=self._titre(donnees), data=donnees)
 
-    def _depart_maison(self, choix: dict[str, Any]) -> str | None:
-        """Départ habituel : départ des transports moins temps sur place et trajet du détour."""
-        depart = date_navitia(choix.get("depart"))
+    def _cles_calcul(self, points: list[dict[str, Any]]) -> dict[str, Any]:
+        """Réglages lus par le calcul actuel (départ, au plus une étape, destination).
+
+        Le calcul ne gère pas encore plusieurs étapes : en attendant, seule la première est prise en compte.
+        """
+        trois = points if len(points) <= 3 else [points[0], points[1], points[-1]]
+        cles = cles_anciennes(trois) or {}
+        cles.setdefault(T_ORIGINE, points[0].get("zone") or self._zone_defaut())
+        dest = points[-1]
+        habituel = dest.get("habituel") or {}
+        cles[T_ARRIVEE_HABITUELLE] = habituel.get("arrivee")
+        cles[T_DUREE] = habituel.get("duree")
+        cles[T_ETAPES] = habituel.get("etapes") or []
+        cles[T_DEPART_HABITUEL] = self._depart_habituel(trois)
+        if T_HEURE not in cles:  # sans aucune contrainte horaire : le calcul suit le départ habituel
+            cles[T_TYPE_HEURE], cles[T_HEURE] = "depart", cles[T_DEPART_HABITUEL] or "08:00:00"
+        return cles
+
+    @staticmethod
+    def _depart_habituel(points: list[dict[str, Any]]) -> str | None:
+        """Départ habituel (veille et rappel) : départ du premier tronçon, d'après les itinéraires choisis."""
+        dest = points[-1]
+        depart = (dest.get("habituel") or {}).get("depart")
         if depart is None:
             return None
-        if self._detour.get(T_DET_ID):
-            if self._detour.get(T_DET_HEURE):
-                h, m, *_ = (int(x) for x in self._detour[T_DET_HEURE].split(":"))
-                depart = depart.replace(hour=h, minute=m)
+        if len(points) == 3:
+            e = points[1]
+            h, m, *_ = (int(x) for x in depart.split(":"))
+            t = datetime(2000, 1, 2, h, m)
+            fe = e.get("arrivee") or fenetre()
+            if fe.get("debut"):
+                hh, mm, *_ = (int(x) for x in fe["debut"].split(":"))
+                t = t.replace(hour=hh, minute=mm)
             else:
-                depart -= timedelta(minutes=float(self._detour.get(T_DET_PAUSE) or 0))
-            depart -= timedelta(minutes=float(self._detour.get(T_DET_DUREE) or 15))
-        return depart.strftime("%H:%M:%S")
+                t -= timedelta(minutes=float(e.get("sejour") or 0))
+            t -= timedelta(minutes=float(e.get("duree") or 15))
+            return t.strftime("%H:%M:%S")
+        return depart
 
     def _titre(self, d: dict[str, Any]) -> str:
         etat = self.hass.states.get(d[T_PERSONNE])
         qui = etat.name if etat else d[T_PERSONNE]
         return f"{d[T_NOM]} ({qui})"
 
-    # ---- Modification ---------------------------------------------------------------
-    def _depart_actuel(self, d: dict[str, Any]) -> str:
-        if d.get(T_ORIGINE_NOM):
-            return d[T_ORIGINE_NOM]
-        etat = self.hass.states.get(d.get(T_ORIGINE) or self._zone_defaut())
-        return etat.name if etat else "Maison"
-
+    # ---- Modification -----------------------------------------------------------------------------
     async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
-        sous = self._get_reconfigure_subentry()
-        d = dict(sous.data)
-        if user_input is not None:
-            recalculer = user_input.pop("recalculer", False)
-            texte_detour = (user_input.pop("recherche_detour", "") or "").strip()
-            texte_depart = (user_input.pop("recherche_depart", "") or "").strip()
-            if user_input.pop("supprimer_detour", False):
-                d = {k: v for k, v in d.items() if not k.startswith("detour_")}
-            if d.get(T_DET_ID) and T_DET_HEURE not in user_input:
-                d.pop(T_DET_HEURE, None)  # heure imposée effacée
-            nouveau = {**d, **user_input}
-            nouveau.pop(T_AVANCE, None)
-            self._saisie = nouveau
-            self._dest = {"id": d[T_DEST_ID], "libelle": d.get(T_DEST_NOM)}
-            self._zone = d.get(T_ORIGINE) or self._zone_defaut()
-            if d.get(T_ORIGINE_ID):
-                self._origine = {"id": d[T_ORIGINE_ID], "libelle": d.get(T_ORIGINE_NOM)}
-            if nouveau.get(T_DET_ID):
-                self._detour = {k: v for k, v in nouveau.items() if k.startswith("detour_")}
-            if texte_detour:
-                self._lieux_detour, erreur = await self._chercher(texte_detour, TYPES_DESTINATION)
-                if erreur:
-                    return self.async_abort(reason=erreur)
-            if texte_depart:
-                self._lieux_depart, erreur = await self._chercher(texte_depart, TYPES_DESTINATION)
-                if erreur and erreur != "aucun_resultat":
-                    return self.async_abort(reason=erreur)
-                self._apres_depart = "detour" if texte_detour else "itineraire"
-                return await self.async_step_depart_puis()
-            if texte_detour:
-                return await self.async_step_detour()
-            change = any(user_input.get(k) != d.get(k) for k in (T_HEURE, T_TYPE_HEURE))
-            if recalculer or change:
-                return await self.async_step_itineraire()
-            return self.async_update_and_abort(self._get_entry(), sous, title=self._titre(nouveau), data=nouveau)
-        return self.async_show_form(
-            step_id="reconfigure",
-            data_schema=self._schema_trajet(d, False),
-            description_placeholders={"destination": d.get(T_DEST_NOM, ""), "itineraire": d.get(T_RESUME, ""), "depart": self._depart_actuel(d)},
-        )
-
-    async def async_step_depart_puis(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
-        """Modification : nouveau départ, puis le détour à choisir ou directement l'itinéraire."""
-        if self._apres_depart == "detour":
-            self._apres_depart = "destination_detour"
-        return await self.async_step_depart()
+        d = dict(self._get_reconfigure_subentry().data)
+        self._general = {T_NOM: d.get(T_NOM, ""), T_PERSONNE: d.get(T_PERSONNE), T_JOURS: d.get(T_JOURS) or JOURS_DEFAUT}
+        zone = d.get(T_ORIGINE) or self._zone_defaut()
+        self._points = points_du_trajet(d, self._nom_zone(zone))
+        return await self.async_step_menu()

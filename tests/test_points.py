@@ -56,9 +56,9 @@ def test_resume():
                       arrivee=fenetre("apres", "08:30:00"), depart=fenetre("entre", "08:35:00", "08:40:00")))
     assert resume_trajet(p).splitlines() == [
         "1. **Départ** · Maison",
-        "2. 🚶 **Étape 1** · École Jules Ferry (6 min) — arrivée à 8 h 20, 5 min sur place, lun, mar, jeu, ven",
-        "3. 🚲 **Étape 2** · Boulangerie (4 min) — arrivée à partir de 8 h 30, 3 min sur place, départ entre 8 h 35 et 8 h 40, en semaine",
-        "4. 🚌 **Destination** · Denfert-Rochereau (Bus 192 → RER B) — arrivée avant 9 h 00",
+        "2. **Étape 1** · École Jules Ferry — 🚶 6 min · arrivée à 8 h 20 · 5 min sur place · lun, mar, jeu, ven",
+        "3. **Étape 2** · Boulangerie — 🚲 4 min · arrivée à partir de 8 h 30 · 3 min sur place · départ entre 8 h 35 et 8 h 40 · en semaine",
+        "4. **Destination** · Denfert-Rochereau — 🚌 Bus 192 → RER B · arrivée avant 9 h 00",
     ]
 
 

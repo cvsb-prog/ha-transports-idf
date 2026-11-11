@@ -186,12 +186,13 @@ def ligne_resume(p: dict[str, Any], rang: int, total: int) -> str:
         ]
     if rang:
         mode = p.get("mode") or "transports"
-        trajet = p.get("resume") if mode == "transports" and p.get("resume") else (
-            f"{p['duree']} min" if p.get("duree") else ("ligne au choix" if mode == "transports" else "")
-        )
-        titre = f"{ICONES_MODE.get(mode, '')} {titre}" + (f" ({trajet})" if trajet else "")
+        if mode == "transports":
+            trajet = p.get("resume") or "au plus rapide"
+        else:
+            trajet = f"{p['duree']} min" if p.get("duree") else ""
+        details.insert(0, f"{ICONES_MODE.get(mode, '')} {trajet}".strip())
     details = [x for x in details if x]
-    return f"{rang + 1}. {titre}" + (f" — {', '.join(details)}" if details else "")
+    return f"{rang + 1}. {titre}" + (f" — {' · '.join(details)}" if details else "")
 
 
 def resume_trajet(points: list[dict[str, Any]]) -> str:
