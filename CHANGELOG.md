@@ -11,6 +11,7 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ### Corrigé
 
+- Carte d'un trajet avec détour : le chemin jusqu'au détour (à pied, à vélo ou en voiture) est dessiné ; seule la suite après le détour l'était.
 - Erreur « binary_sensor.workday_sensor … missing or not currently available » au démarrage : Workday n'est plus interrogé avant d'être chargé (jours fériés tirés du calendrier français en attendant).
 
 ## [1.0.0] - 2026-11-10
