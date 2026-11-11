@@ -46,6 +46,7 @@ class ErreurQuota(ErreurPrim):
 
 
 _PLANS_COMPLETS: dict[str, tuple[datetime, dict[str, Any]]] = {}
+_TRACES_DIRECTES: dict[tuple[str, str, str], tuple[datetime, dict[str, Any] | None]] = {}
 
 
 class ClientPrim:
@@ -126,6 +127,39 @@ class ClientPrim:
     async def temps_marche(self, lat: float, lon: float, zone_id: str) -> int | None:
         """Durée à pied (secondes) calculée par le calculateur, None si pas de solution."""
         return await self.temps_direct(f"{lon};{lat}", zone_id, "walking")
+
+    async def trace_directe(self, depart: str, arrivee: str, mode: str) -> dict[str, Any] | None:
+        """Tracé d'un trajet direct à pied (walking), à vélo (bike) ou en voiture (car), gardé une semaine.
+
+        → {"trace": [[lat, lon], …], "de": [lat, lon], "vers": [lat, lon]} ou None.
+        """
+        cle = (depart, arrivee, mode)
+        deja = _TRACES_DIRECTES.get(cle)
+        if deja and datetime.now(UTC) - deja[0] < timedelta(days=7):
+            return deja[1]
+        params = [
+            ("from", depart),
+            ("to", arrivee),
+            ("direct_path", "only"),
+            ("direct_path_mode[]", mode),
+            ("first_section_mode[]", mode),
+            ("last_section_mode[]", mode),
+        ]
+        donnees = await self._get(f"{NAVITIA}/journeys", params)
+        journeys = [j for j in donnees.get("journeys", []) if isinstance(j.get("duration"), int)]
+        sortie = None
+        if journeys:
+            j = min(journeys, key=lambda x: x["duration"])
+            points: list[list[float]] = []
+            for s in j.get("sections") or []:
+                t, _ = _trace(s, 150)
+                points += t[1:] if points and t and t[0] == points[-1] else t
+            if len(points) > 1:
+                sortie = {"trace": points, "de": points[0], "vers": points[-1]}
+        if len(_TRACES_DIRECTES) > 100:
+            _TRACES_DIRECTES.clear()
+        _TRACES_DIRECTES[cle] = (datetime.now(UTC), sortie)
+        return sortie
 
     async def temps_direct(self, depart: str, arrivee: str, mode: str) -> int | None:
         """Durée (secondes) d'un trajet direct à pied (walking), à vélo (bike) ou en voiture (car)."""

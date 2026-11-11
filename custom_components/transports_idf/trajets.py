@@ -44,6 +44,7 @@ from .const import (
     EVENEMENT_ALERTE,
     JOUR_FERIE,
     JOURS_DEFAUT,
+    MODES_DETOUR,
     OPT_IGNORER_INFO,
     SOUS_TRAJET,
     T_DEST_ID,
@@ -255,6 +256,16 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
             duree = timedelta(minutes=float(d.get(T_DET_DUREE) or 0))
             dep, arr = (quand, quand + duree) if represente == "departure" else (quand - duree, quand)
             etape = {"type": "detour", "mode": mode, "duree": round(duree.total_seconds() / 60), "vers": d.get(T_DET_NOM)}
+            # Tracé du détour pour la carte du trajet (la durée reste celle réglée dans le trajet).
+            try:
+                trace = await self.client.trace_directe(depuis, d[T_DET_ID], MODES_DETOUR.get(mode, "walking"))
+            except ErreurJeton as err:
+                raise ConfigEntryAuthFailed("Jeton PRIM refusé") from err
+            except ErreurPrim as err:
+                _LOGGER.debug("Tracé du détour %s → %s : %s", depuis, d.get(T_DET_ID), err)
+                trace = None
+            if trace:
+                etape.update(trace=trace["trace"], de_coord=trace["de"], vers_coord=trace["vers"])
             return dep, arr, [etape], []
         options = await self._options(depuis, d[T_DET_ID], quand, represente, None, bloquees)
         options = [o for o in options if _dep(o) and _arr(o)]

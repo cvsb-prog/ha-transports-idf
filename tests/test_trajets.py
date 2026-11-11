@@ -124,6 +124,9 @@ async def test_detour(hass: HomeAssistant, aioclient_mock, freezer):
     freezer.move_to("2026-11-06 06:00:00+00:00")
     hass.states.async_set("zone.home", "0", {"latitude": 48.7800, "longitude": 2.3170})
     m = dt_util.now().replace(tzinfo=None, second=0, microsecond=0)
+    # Tracé à pied maison → école (pour la carte du trajet), demandé avant les itinéraires en transports.
+    aioclient_mock.get(re.compile(r"/v2/navitia/journeys\?.*direct_path=only"), json={"journeys": [{"duration": 380, "sections": [
+        {"type": "street_network", "mode": "walking", "geojson": {"type": "LineString", "coordinates": [[2.3170, 48.7800], [2.3180, 48.7810], [2.3195, 48.7822]]}}]}]})
     mocks(aioclient_mock, itin(m, 50, 80, 52, 95))
     heure_ecole = m + timedelta(minutes=40)
     e = entree(hass, type_heure="arrivee", heure_depart=(m + timedelta(minutes=90)).strftime("%H:%M:00"),
@@ -135,6 +138,8 @@ async def test_detour(hass: HomeAssistant, aioclient_mock, freezer):
     a = capteur(hass).attributes
     n = a["nominal"]
     assert [x["type"] for x in n["etapes"][:2]] == ["detour", "pause"]
+    # Le détour a son tracé : la carte du trajet le dessine (avant, seule la suite après l'école y figurait).
+    assert n["etapes"][0]["trace"][0] == [48.78, 2.317] and n["etapes"][0]["vers_coord"] == [48.7822, 2.3195]
     assert n["etapes"][0]["duree"] == 6 and n["etapes"][1]["reprise"] == f"{(heure_ecole + timedelta(minutes=5)).hour} h {(heure_ecole + timedelta(minutes=5)).minute:02d}"
     # On quitte la maison 6 min avant l'heure de l'école
     assert n["depart_h"] == f"{(heure_ecole - timedelta(minutes=6)).hour} h {(heure_ecole - timedelta(minutes=6)).minute:02d}"
