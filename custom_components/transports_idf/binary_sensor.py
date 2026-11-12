@@ -25,7 +25,6 @@ from .const import (
     T_ORIGINE_NOM,
     T_PERSONNE,
     T_RESUME,
-    T_SECTIONS,
     T_TYPE_HEURE,
     VEILLE_MINUTES,
 )
@@ -37,6 +36,7 @@ from .trajets import (
     aussi_feries,
     heure_depart_maison,
     jours_trajet,
+    sections_trajet,
 )
 
 
@@ -94,13 +94,16 @@ class TrajetSensor(CoordinatorEntity[TraficCoordinator], BinarySensorEntity):
             "jours_feries": aussi_feries(d),
             "avance": VEILLE_MINUTES,
             "en_veille": e.en_veille,
-            "itineraire": d.get(T_RESUME),
-            "sections": d.get(T_SECTIONS, []),
+            "itineraire": " · ".join(p.get("resume") or "" for p in (d.get("points") or [])[1:] if p.get("resume")) if len(d.get("points") or []) > 3 else d.get(T_RESUME),
+            "sections": sections_trajet(d),
             "perturbations": e.perturbations,
             "nominal": e.nominal,
             "direct": e.direct if e.direct_le and (e.en_veille or dt_util.now().replace(tzinfo=None) - e.direct_le < DUREE_DIRECT) else [],
             "direct_le": dt_util.as_utc(e.direct_le.replace(tzinfo=dt_util.get_default_time_zone())).isoformat() if e.direct_le else None,
             "rappel": e.rappel,
+            # Trajet à étapes : heures et écarts à chaque point (rappel pendant la veille, sinon trajet habituel du jour).
+            "horaires": (e.rappel or e.nominal or {}).get("points"),
+            "possible": (e.rappel or e.nominal or {}).get("possible", True),
             "rechange": e.rechange,
             "detour": {k[7:]: v for k, v in d.items() if k.startswith("detour_")} or None,
             "origine_nom": d.get(T_ORIGINE_NOM) or self._nom_zone(d.get(T_ORIGINE)),

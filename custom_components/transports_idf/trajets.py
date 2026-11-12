@@ -65,7 +65,9 @@ from .const import (
     T_TYPE_HEURE,
     VEILLE_MINUTES,
 )
-from .coordinator import Itineraires, _heure, option, origine_navitia
+from .coordinator import Itineraires, _heure, coordonnees_zone, option, origine_navitia
+from .planning import INF, besoin_planning, bornes_point, minutes, planifier, points_du_jour
+from .points import points_du_trajet
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,6 +97,20 @@ def _dep(o: dict[str, Any] | None) -> datetime | None:
 
 def _arr(o: dict[str, Any] | None) -> datetime | None:
     return date_navitia((o or {}).get("arrivee"))
+
+
+def sections_trajet(d: dict[str, Any]) -> list[dict[str, Any]]:
+    """Sections (lignes) de tous les tronçons en transports du trajet, sinon de l'itinéraire habituel enregistré."""
+    if d.get("points") and besoin_planning(d["points"]):
+        return [s for p in d["points"][1:] if (p.get("mode") or "transports") == "transports" for s in p.get("sections") or []]
+    return list(d.get(T_SECTIONS) or [])
+
+
+def etapes_trajet(d: dict[str, Any]) -> list[dict[str, Any]]:
+    """Étapes habituelles (résumé replié de la carte) de tous les tronçons."""
+    if d.get("points") and besoin_planning(d["points"]):
+        return [e for p in d["points"][1:] for e in (p.get("habituel") or {}).get("etapes") or []]
+    return list(d.get(T_ETAPES) or [])
 
 
 def jours_trajet(d: dict[str, Any]) -> set[int]:
@@ -303,6 +319,8 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         quand=datetime : départ de la maison à cette heure — calcul au départ de maintenant.
         """
         d = t.data
+        if d.get("points") and besoin_planning(d["points"]):
+            return await self._plans_etapes(t, jour, quand, lignes is not None, [] if lignes is not None else bloquees, nombre)
         depuis, vers = origine_navitia(self.hass, self.config_entry, d), d[T_DEST_ID]
         heure = _heure(d[T_HEURE])
         cible = datetime.combine(jour, heure)
@@ -361,10 +379,175 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         return sortie
 
     # ---- Mise à jour --------------------------------------------------------
+    # ---- Trajets à étapes -------------------------------------------------------
+    def _navitia_point(self, p: dict[str, Any]) -> str:
+        if p.get("id"):
+            return p["id"]
+        lat, lon = coordonnees_zone(self.hass, p.get("zone") or self.config_entry.data.get("zone"))
+        return f"{lon};{lat}"
+
+    async def _simuler(self, points, jour: date, depart: datetime, preferees: bool, bloquees: list[str], nombre: int = 1):
+        """Trajet réel au départ de « depart » : chaque tronçon calculé par PRIM (transports) ou à durée réglée.
+
+        Retourne une liste (une par option du dernier tronçon en transports) de [segments], chaque segment
+        {i, depart, arrivee, option | etape}, ou [] si un tronçon en transports n'a pas d'itinéraire.
+        """
+        n = len(points)
+        navitia = [self._navitia_point(p) for p in points]
+        derniers = max((i for i in range(1, n) if (points[i].get("mode") or "transports") == "transports"), default=None)
+        branches: list[list[dict[str, Any]]] = [[]]
+        t = depart
+        for i in range(1, n):
+            p = points[i]
+            mode = p.get("mode") or "transports"
+            if mode != "transports":
+                duree = timedelta(minutes=float(p.get("duree") or 0))
+                etape = {"type": "detour", "mode": mode, "duree": round(duree.total_seconds() / 60), "vers": p.get("nom")}
+                try:
+                    trace = await self.client.trace_directe(navitia[i - 1], navitia[i], MODES_DETOUR.get(mode, "walking"))
+                except ErreurJeton as err:
+                    raise ConfigEntryAuthFailed("Jeton PRIM refusé") from err
+                except ErreurPrim as err:
+                    _LOGGER.debug("Tracé %s → %s : %s", navitia[i - 1], navitia[i], err)
+                    trace = None
+                if trace:
+                    etape.update(trace=trace["trace"], de_coord=trace["de"], vers_coord=trace["vers"])
+                for b in branches:
+                    b.append({"i": i, "depart": t, "arrivee": t + duree, "etape": etape})
+                arrivee = t + duree
+            else:
+                lignes = [x["ligne_id"] for x in p.get("sections") or [] if x.get("ligne_id")] if preferees and not p.get("libre") else None
+                opts = [o for o in await self._options(navitia[i - 1], navitia[i], t, "departure", lignes, bloquees) if _arr(o) and _dep(o)]
+                if not opts and lignes:  # lignes habituelles sans itinéraire à cette heure : au plus rapide
+                    opts = [o for o in await self._options(navitia[i - 1], navitia[i], t, "departure", None, bloquees) if _arr(o) and _dep(o)]
+                if not opts:
+                    return []
+                opts.sort(key=_arr)
+                if i == derniers and nombre > 1:
+                    branches = [b + [{"i": i, "depart": _dep(o), "arrivee": _arr(o), "option": o}] for b in branches for o in opts[:nombre]]
+                else:
+                    for b in branches:
+                        b.append({"i": i, "depart": _dep(opts[0]), "arrivee": _arr(opts[0]), "option": opts[0]})
+                arrivee = _arr(opts[0])
+            if i < n - 1:
+                a_bas, _, d_bas, _ = bornes_point(points, i)
+                base = datetime.combine(jour, datetime.min.time())
+                pret = max(arrivee, base + timedelta(minutes=a_bas) if a_bas > -INF else arrivee) + timedelta(minutes=float(p.get("sejour") or 0))
+                t = max(pret, base + timedelta(minutes=d_bas)) if d_bas > -INF else pret
+        # Après le dernier tronçon en transports, chaque branche recalcule ses heures (options d'arrivées différentes).
+        sortie = []
+        for b in branches:
+            t = depart
+            refaits = []
+            for seg in b:
+                i = seg["i"]
+                if "etape" in seg:
+                    duree = seg["arrivee"] - seg["depart"]
+                    seg = {**seg, "depart": t, "arrivee": t + duree}
+                elif seg["depart"] < t - timedelta(minutes=1):
+                    refaits = None  # option partie avant qu'on soit là : branche impossible
+                    break
+                refaits.append(seg)
+                if i < n - 1:
+                    a_bas, _, d_bas, _ = bornes_point(points, i)
+                    base = datetime.combine(jour, datetime.min.time())
+                    pret = max(seg["arrivee"], base + timedelta(minutes=a_bas) if a_bas > -INF else seg["arrivee"]) + timedelta(minutes=float(points[i].get("sejour") or 0))
+                    t = max(pret, base + timedelta(minutes=d_bas)) if d_bas > -INF else pret
+            if refaits:
+                sortie.append(refaits)
+        return sortie
+
+    def _assembler_etapes(self, points, jour: date, segs: list[dict[str, Any]]) -> dict[str, Any]:
+        """Itinéraire complet d'un trajet à étapes, avec les heures et écarts à chaque point."""
+        n = len(points)
+        base = datetime.combine(jour, datetime.min.time())
+        etapes: list[dict[str, Any]] = []
+        sections: list[dict[str, Any]] = []
+        horaires = [{"nom": points[0].get("nom"), "depart_h": _h(segs[0]["depart"]), "retard": 0}]
+        for k, seg in enumerate(segs):
+            i, p = seg["i"], points[seg["i"]]
+            if "option" in seg:
+                o = seg["option"]
+                etapes += [{**e, "vers": e.get("vers") or p.get("nom")} for e in o["etapes"]]
+                sections += o["sections"]
+            else:
+                etapes.append(seg["etape"])
+            _, a_haut, _, d_haut = bornes_point(points, i)
+            retard = max(0, round((seg["arrivee"] - (base + timedelta(minutes=a_haut))).total_seconds() / 60)) if a_haut < INF else 0
+            h = {"nom": p.get("nom"), "arrivee_h": _h(seg["arrivee"]), "retard": retard}
+            if i < n - 1 and k + 1 < len(segs):
+                # On quitte le point à la fin du séjour (ou plus tard, borne de départ) ; l'attente du véhicule suit.
+                fin_sejour = max(seg["arrivee"] + timedelta(minutes=float(p.get("sejour") or 0)), segs[k + 1]["depart"] if "etape" in segs[k + 1] else seg["arrivee"])
+                _, _, d_bas, _ = bornes_point(points, i)
+                if d_bas > -INF:
+                    fin_sejour = max(fin_sejour, base + timedelta(minutes=d_bas))
+                h["depart_h"] = _h(fin_sejour)
+                if d_haut < INF:
+                    h["retard"] = max(retard, round((fin_sejour - (base + timedelta(minutes=d_haut))).total_seconds() / 60))
+                etapes.append({"type": "pause", "duree": int(float(p.get("sejour") or 0)), "lieu": p.get("nom"), "reprise": _h(fin_sejour)})
+            horaires.append(h)
+        depart, arrivee = segs[0]["depart"], segs[-1]["arrivee"]
+        retards = [h for h in horaires if h["retard"]]
+        duree = int((arrivee - depart).total_seconds())
+        return {
+            "depart": _fmt(depart),
+            "arrivee": _fmt(arrivee),
+            "depart_h": _h(depart),
+            "arrivee_h": _h(arrivee),
+            "duree": duree,
+            "etapes": etapes,
+            "sections": sections,
+            "correspondances": max(0, len(sections) - 1),
+            "resume": resume_itineraire(sections, duree, len(sections) - 1 if sections else None),
+            "texte": texte_itineraire(etapes, _fmt(depart), _fmt(arrivee)),
+            "detour": True,
+            "points": horaires,
+            "possible": not retards,
+            "bloquant": retards[0]["nom"] if retards else None,
+        }
+
+    async def _plans_etapes(self, t, jour: date, quand: datetime | None, preferees: bool, bloquees: list[str], nombre: int = 1) -> list[dict[str, Any]]:
+        """Trajet à étapes : horaires planifiés (planning.py) puis vérifiés tronçon par tronçon avec PRIM.
+
+        1. durées estimées (itinéraire habituel, durée réglée) → heure de départ ;
+        2. trajet réel à partir de cette heure → durées réelles (attente du véhicule comprise) → nouvelle heure ;
+        3. trajet réel à partir de la nouvelle heure : c'est le plan.
+        quand : départ imposé (au départ de maintenant) ; on enchaîne au plus tôt.
+        """
+        points = points_du_jour(points_du_trajet(t.data), jour)
+        base = datetime.combine(jour, datetime.min.time())
+        estime = [0.0] + [
+            float(p.get("duree") or 0) if (p.get("mode") or "transports") != "transports" else ((p.get("habituel") or {}).get("duree") or 1800) / 60
+            for p in points[1:]
+        ]
+        partir_a = (quand - base).total_seconds() / 60 if quand else None
+        libre = minutes(t.data.get("depart_habituel")) or 8 * 60
+        plan = planifier(points, estime, depart_libre=libre, partir_a=partir_a)
+        if plan.depart is None:
+            return []
+        essais = await self._simuler(points, jour, base + timedelta(minutes=plan.depart), preferees, bloquees)
+        if not essais:
+            return []
+        if quand is None:
+            segs = essais[0]
+            reel = [0.0] * len(points)
+            for k, seg in enumerate(segs):
+                avant = segs[k - 1]["arrivee"] if k else base + timedelta(minutes=plan.depart)
+                # Durée réelle depuis la fin du séjour précédent : trajet + attente du véhicule.
+                fin = avant if k == 0 else max(avant + timedelta(minutes=float(points[seg["i"] - 1].get("sejour") or 0)), avant)
+                reel[seg["i"]] = max(1.0, (seg["arrivee"] - min(fin, seg["depart"])).total_seconds() / 60)
+            plan = planifier(points, reel, depart_libre=libre)
+            if plan.depart is None:
+                return []
+            essais = await self._simuler(points, jour, base + timedelta(minutes=plan.depart), preferees, bloquees, nombre)
+        else:
+            essais = await self._simuler(points, jour, quand, preferees, bloquees, nombre)
+        return [self._assembler_etapes(points, jour, segs) for segs in essais if segs]
+
     async def _async_update_data(self) -> dict[str, EtatTrajet]:
         trajets = self._trajets()
         maintenant = dt_util.now().replace(tzinfo=None)
-        lignes = sorted({sec["ligne_id"] for t in trajets for sec in t.data.get(T_SECTIONS, []) if sec.get("ligne_id")})
+        lignes = sorted({sec["ligne_id"] for t in trajets for sec in sections_trajet(t.data) if sec.get("ligne_id")})
         resultats = await asyncio.gather(*(self.client.perturbations_ligne(l) for l in lignes), return_exceptions=True)
         if any(isinstance(r, ErreurJeton) for r in resultats):
             raise ConfigEntryAuthFailed("Jeton PRIM refusé")
@@ -413,11 +596,11 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         else:
             reference = datetime.combine(self.prochaine_occurrence(d, maintenant), _heure(heure_depart_maison(d)))
         # Arrêts parcourus : ceux du trajet habituel recalculé (à jour), sinon ceux enregistrés à la création.
-        etapes = {e.get("ligne_id"): e for e in d.get(T_ETAPES) or [] if e.get("type") == "transport" and e.get("ligne_id")}
+        etapes = {e.get("ligne_id"): e for e in etapes_trajet(d) if e.get("type") == "transport" and e.get("ligne_id")}
         for e in (etat.nominal or {}).get("etapes") or []:
             if e.get("type") == "transport" and e.get("ligne_id") in etapes and e.get("arrets"):
                 etapes[e["ligne_id"]] = e
-        noms = {sec["ligne_id"]: sec for sec in d.get(T_SECTIONS, []) if sec.get("ligne_id")}
+        noms = {sec["ligne_id"]: sec for sec in sections_trajet(d) if sec.get("ligne_id")}
         perts: dict[str, dict[str, Any]] = {}
         niveaux: dict[str, list] = {}
         for lid, sec in noms.items():
@@ -442,7 +625,7 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         etat.niveaux = {lid: pire_niveau(n) for lid, n in niveaux.items()}
 
     def _preferees(self, t) -> list[str]:
-        return [s["ligne_id"] for s in t.data.get(T_SECTIONS, []) if s.get("ligne_id")]
+        return [s["ligne_id"] for s in sections_trajet(t.data) if s.get("ligne_id")]
 
     async def _enrichir(self, its: list[dict[str, Any]], etat: EtatTrajet) -> None:
         await self.calcul.alertes(its, self._par_ligne)
@@ -490,6 +673,9 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         if not jour_du_trajet(d, jour, self.feries):
             etat.rappel = None
             return
+        if d.get("points") and besoin_planning(d["points"]):
+            await self._rappel_etapes(t, etat, jour, maintenant)
+            return
         plans = await self._plans(t, jour, None, None, etat.bloquees, 3)
         cible = datetime.combine(jour, _heure(d[T_HEURE]))
         if d.get(T_TYPE_HEURE) == "arrivee":
@@ -521,6 +707,35 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
             if d.get(T_TYPE_HEURE) == "arrivee" or (avec_detour(d, jour) and d.get(T_DET_HEURE))
             else 0,
             "retard": d.get(T_TYPE_HEURE) == "arrivee" and bool(_arr(meilleur) and _arr(meilleur) > cible),
+            "habituel": _lignes(meilleur) == self._preferees(t),
+        }
+
+    async def _rappel_etapes(self, t, etat: EtatTrajet, jour: date, maintenant: datetime) -> None:
+        """Trajet à étapes : départ planifié ; s'il est déjà passé, au plus tôt à partir de maintenant (retards)."""
+        d = t.data
+        plans = await self._plans(t, jour, None, None, etat.bloquees, 1)
+        meilleur = plans[0] if plans else None
+        if jour == maintenant.date() and (meilleur is None or (_dep(meilleur) and _dep(meilleur) < maintenant - timedelta(minutes=1))):
+            maintenant_plans = await self._plans(t, jour, maintenant, None, etat.bloquees, 1)
+            meilleur = maintenant_plans[0] if maintenant_plans else meilleur
+        pts = points_du_jour(points_du_trajet(d), jour)
+        _, haut, _, _ = bornes_point(pts, len(pts) - 1)
+        cible = datetime.combine(jour, datetime.min.time()) + timedelta(minutes=haut) if haut < INF else None
+        if meilleur is None:
+            etat.rappel = {"impossible": True, "heure_cible": _h(cible), "type_heure": "arrivee" if cible else "depart"}
+            return
+        await self._enrichir([meilleur], etat)
+        depart = _dep(meilleur)
+        habituel = datetime.combine(jour, _heure(heure_depart_maison(d)))
+        fuseau = dt_util.get_default_time_zone()
+        etat.rappel = {
+            **meilleur,
+            "type_heure": "arrivee" if cible else "depart",
+            "heure_cible": _h(cible),
+            "cible_iso": dt_util.as_utc(cible.replace(tzinfo=fuseau)).isoformat() if cible else None,
+            "depart_iso": dt_util.as_utc(depart.replace(tzinfo=fuseau)).isoformat(),
+            "avance": round((habituel - depart).total_seconds() / 60),
+            "retard": not meilleur.get("possible", True),
             "habituel": _lignes(meilleur) == self._preferees(t),
         }
 
@@ -587,9 +802,9 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
     def etapes_habituelles(self, sous_id: str) -> list[dict[str, Any]]:
         sous = self.config_entry.subentries[sous_id]
         etat = self.etats.get(sous_id) or EtatTrajet()
-        etapes = [dict(e) for e in sous.data.get(T_ETAPES) or []]
+        etapes = [dict(e) for e in etapes_trajet(sous.data)]
         if not etapes:
-            etapes = [{"type": "transport", **{k: s.get(k) for k in ("nom", "mode", "couleur", "couleur_texte", "ligne_id", "de", "vers", "direction")}} for s in sous.data.get(T_SECTIONS, [])]
+            etapes = [{"type": "transport", **{k: s.get(k) for k in ("nom", "mode", "couleur", "couleur_texte", "ligne_id", "de", "vers", "direction")}} for s in sections_trajet(sous.data)]
         for e in etapes:
             if e.get("type") == "transport":
                 lid = e.get("ligne_id")

@@ -51,6 +51,7 @@ from .api import (
     refs_candidates,
     titre_ligne,
 )
+from .planning import besoin_planning, planifier
 from .points import (
     APRES,
     AUCUNE,
@@ -984,6 +985,17 @@ class TrajetFlow(_Base):
         cles[T_DUREE] = habituel.get("duree")
         cles[T_ETAPES] = habituel.get("etapes") or []
         cles[T_DEPART_HABITUEL] = self._depart_habituel(trois)
+        if besoin_planning(points):
+            # Trajet à étapes : départ habituel planifié avec les durées connues (itinéraires choisis, durées réglées).
+            durees = [0.0] + [
+                float(p.get("duree") or 0) if (p.get("mode") or "transports") != "transports" else ((p.get("habituel") or {}).get("duree") or 1800) / 60
+                for p in points[1:]
+            ]
+            plan = planifier(points, durees, depart_libre=8 * 60)
+            if plan.depart is not None:
+                h = int(plan.depart) % (24 * 60)
+                cles[T_DEPART_HABITUEL] = f"{h // 60:02d}:{h % 60:02d}:00"
+            cles[T_TYPE_HEURE], cles[T_HEURE] = "depart", cles[T_DEPART_HABITUEL] or "08:00:00"
         if T_HEURE not in cles:  # sans aucune contrainte horaire : le calcul suit le départ habituel
             cles[T_TYPE_HEURE], cles[T_HEURE] = "depart", cles[T_DEPART_HABITUEL] or "08:00:00"
         return cles
