@@ -485,3 +485,25 @@ async def test_ancien_trajet_enregistre_sans_rechoisir(hass: HomeAssistant, aioc
     d = entree.subentries[sous.subentry_id].data
     assert (d["depart_habituel"], d["arrivee_habituelle"], d["duree"], d["etapes"]) == ("08:21:00", "08:55:00", 2040, etapes)
     assert (d["detour_id"], d["detour_duree"], d["type_heure"], d["heure_depart"], d["resume"]) == ("poi:ecole", 6, "arrivee", "09:00:00", "RER B")
+
+
+def test_gares_sautees_par_des_trains_passants():
+    """« Bloquante passante » : une perturbation par gare sautée, décrite par ses deux voisines ; un seul message affiché."""
+    from custom_components.transports_idf.api import analyser_perturbations, messages_affiches
+
+    def gare(i, nom):
+        return {"id": f"stop_area:IDFM:{i}", "name": nom, "embedded_type": "stop_area", "stop_area": {"id": f"stop_area:IDFM:{i}", "name": nom}}
+
+    texte = "Les gares B et D en direction de E ne sont pas desservies."
+    def pert(ident, de, vers):
+        return {"id": ident, "status": "active", "severity": {"name": "Bloquante passante", "effect": "MODIFIED_SERVICE"},
+                "messages": [{"text": texte}],
+                "impacted_objects": [{"pt_object": {"id": "line:IDFM:C01727", "embedded_type": "line"},
+                                      "impacted_rail_section": {"from": de, "to": vers, "routes": [{"id": "route:1"}]}}]}
+    donnees = {"disruptions": [pert("b", gare(1, "Gare A"), gare(3, "Gare C")), pert("d", gare(3, "Gare C"), gare(5, "Gare E"))]}
+    perts = analyser_perturbations(donnees)
+    assert {p["portee"] for p in perts} == {"arrets"} and all(p["troncon"] == [] for p in perts)
+    msgs = messages_affiches(perts)
+    assert len(msgs) == 1 and msgs[0]["niveau"] == "perturbe" and msgs[0]["portee"] == "arrets"
+    assert [(s["de"]["zones"], s["vers"]["zones"]) for s in msgs[0]["sauts"]] == [
+        (["stop_area:IDFM:1"], ["stop_area:IDFM:3"]), (["stop_area:IDFM:3"], ["stop_area:IDFM:5"])]
