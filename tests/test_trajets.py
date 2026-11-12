@@ -205,3 +205,68 @@ async def test_creation_avec_detour(hass: HomeAssistant, aioclient_mock):
     d = next(s for s in e.subentries.values() if s.subentry_type == "trajet").data
     assert (d["detour_mode"], d["detour_duree"], d["detour_heure"], d["detour_jours"], d["jours"]) == ("velo", 7, "08:20:00", ["0", "1", "3"], ["0", "1", "2", "3", "4"])
     assert d["depart_habituel"] == "08:13:00"  # 8 h 20 − 7 min de vélo
+
+
+async def test_trajet_a_etapes(hass: HomeAssistant, aioclient_mock, freezer):
+    """Maison → école à pied (arrivée à 8 h 20, 5 min) → pressing en transports (3 min) → bureau avant 9 h 20.
+
+    PRIM (simulé) : chaque tronçon en transports part 3 min après l'heure demandée et dure 20 min.
+    """
+    from datetime import datetime
+
+    from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
+
+    from custom_components.transports_idf.points import fenetre, point
+
+    await hass.config.async_set_time_zone("Europe/Paris")
+    freezer.move_to("2026-11-06 05:00:00+00:00")  # vendredi, 6 h à Paris
+    hass.states.async_set("zone.home", "0", {"latitude": 48.7800, "longitude": 2.3170, "friendly_name": "Maison"})
+    aioclient_mock.get(re.compile(r"/v2/navitia/journeys\?.*direct_path=only"), json={"journeys": [{"duration": 360, "sections": [
+        {"type": "street_network", "mode": "walking", "geojson": {"type": "LineString", "coordinates": [[2.3170, 48.7800], [2.3195, 48.7822]]}}]}]})
+
+    async def journeys(method, url, data):
+        quand = datetime.strptime(url.query["datetime"], "%Y%m%dT%H%M%S")
+        dep = quand + timedelta(minutes=3) if url.query.get("datetime_represents") != "arrival" else quand - timedelta(minutes=23)
+        j = copy.deepcopy(E.ITINERAIRES)
+        j["journeys"] = j["journeys"][:1]
+        j["journeys"][0]["departure_date_time"] = dep.strftime("%Y%m%dT%H%M%S")
+        j["journeys"][0]["arrival_date_time"] = (dep + timedelta(minutes=20)).strftime("%Y%m%dT%H%M%S")
+        return AiohttpClientMockResponse("get", url, json=j)
+
+    reseau(aioclient_mock)
+    aioclient_mock.get(re.compile(r"/line_reports/lines/"), json={"disruptions": []})
+    aioclient_mock.get(re.compile(r"/v2/navitia/journeys"), side_effect=journeys)
+    aioclient_mock.get(re.compile(r"/stop-monitoring"), json=E.siri(dt_util.utcnow(), []))
+    pts = [point("Maison", zone="zone.home"),
+           point("École", id="poi:ecole", mode="marche", duree=6, sejour=5, arrivee=fenetre("entre", "08:20:00", "08:20:00")),
+           point("Pressing", id="stop_area:IDFM:71946", mode="transports", sejour=3),
+           point("Bureau", id="stop_area:IDFM:70000", mode="transports", arrivee=fenetre("avant", fin="09:20:00"))]
+    pts[2]["libre"] = pts[3]["libre"] = True
+    e = entree(hass, points=pts, type_heure="depart", heure_depart="08:14:00", depart_habituel="08:14:00")
+    assert await hass.config_entries.async_setup(e.entry_id)
+    await hass.async_block_till_done()
+    n = capteur(hass).attributes["nominal"]
+    assert [p["nom"] for p in n["points"]] == ["Maison", "École", "Pressing", "Bureau"]
+    # Départ au plus tard pour être à l'école à 8 h 20 ; puis 8 h 25 → pressing 8 h 48 → 8 h 51 → bureau 9 h 14.
+    assert [(p.get("arrivee_h"), p.get("depart_h")) for p in n["points"]] == [
+        (None, "8 h 14"), ("8 h 20", "8 h 25"), ("8 h 48", "8 h 51"), ("9 h 14", None)]
+    assert n["possible"] is True and n["bloquant"] is None
+    types = [x["type"] for x in n["etapes"]]
+    assert types[0] == "detour" and types.count("pause") == 2 and "transport" in types
+    assert n["etapes"][0]["trace"]  # tracé à pied jusqu'à l'école
+
+    # Bureau avant 9 h 05 : intenable (+9 min), point bloquant affiché.
+    sous = next(iter(e.subentries.values()))
+    pts = copy.deepcopy(pts)
+    pts[3]["arrivee"] = fenetre("avant", fin="09:05:00")
+    hass.config_entries.async_update_subentry(e, sous, data={**sous.data, "points": pts})
+    await hass.async_block_till_done()
+    n = capteur(hass).attributes["nominal"]
+    assert n["possible"] is False and n["bloquant"] == "Bureau" and n["points"][3]["retard"] == 9
+    assert n["points"][0]["depart_h"] == "8 h 14"  # on ne peut pas partir plus tôt utilement : l'école ouvre à 8 h 20
+    # Pendant la veille : rappel sur le départ planifié, en retard puisque le bureau est intenable.
+    freezer.move_to("2026-11-06 06:40:00+00:00")  # 7 h 40
+    await e.runtime_data.trafic.async_refresh()
+    await hass.async_block_till_done()
+    r = capteur(hass).attributes["rappel"]
+    assert r["depart_h"] == "8 h 14" and r["retard"] is True and r["type_heure"] == "arrivee" and r["heure_cible"] == "9 h 05"

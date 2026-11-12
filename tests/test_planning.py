@@ -69,3 +69,14 @@ def test_sans_aucune_borne():
     assert p.libre and p.horaires == []
     p = planifier(pts, [0, 10, 10], depart_libre=14 * 60)
     assert heures(p) == [("—", "14 h 00"), ("14 h 10", "14 h 40"), ("14 h 50", "—")]
+
+
+def test_au_depart_de_maintenant():
+    """Départ imposé (maintenant) : on enchaîne au plus tôt, le retard se constate au premier point concerné."""
+    pts = [point("Maison"), point("École", sejour=5, arrivee=fenetre("entre", "08:20", "08:30")),
+           point("Bureau", arrivee=fenetre("avant", fin="09:00"))]
+    p = planifier(pts, [0, 10, 25], partir_a=8 * 60 + 25)
+    assert not p.possible and p.bloquant == 1
+    assert heures(p) == [("—", "8 h 25"), ("8 h 35", "8 h 40"), ("9 h 05", "—")]
+    p = planifier(pts, [0, 10, 25], partir_a=8 * 60)  # tôt : attente à l'école jusqu'à 8 h 20
+    assert p.possible and heures(p) == [("—", "8 h 00"), ("8 h 10", "8 h 25"), ("8 h 50", "—")] and p.horaires[1].attente == 10

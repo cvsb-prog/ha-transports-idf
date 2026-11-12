@@ -66,10 +66,11 @@ class Planning:
         return self.horaires[0].depart if self.horaires else None
 
 
-def planifier(points: list[dict[str, Any]], durees: list[float], depart_libre: float | None = None) -> Planning:
+def planifier(points: list[dict[str, Any]], durees: list[float], depart_libre: float | None = None, partir_a: float | None = None) -> Planning:
     """durees[i] : minutes du tronçon qui arrive au point i (durees[0] ignoré).
 
     depart_libre : heure de départ à prendre si rien ne la fixe (ni borne au départ, ni borne « avant » nulle part).
+    partir_a : départ imposé (au départ de maintenant) ; on enchaîne au plus tôt, les retards se constatent.
     """
     n = len(points)
     if n < 2:
@@ -104,13 +105,14 @@ def planifier(points: list[dict[str, Any]], durees: list[float], depart_libre: f
         l_dep[i] = min(d_max[i], l_arr[i + 1] - d[i + 1])
         l_arr[i] = min(a_max[i], l_dep[i] - sej[i]) if i else -INF
 
-    depart = l_dep[0]
+    depart = l_dep[0] if partir_a is None else partir_a
     libre = not math.isfinite(depart)
     if libre:
         depart = d_bas[0] if math.isfinite(d_bas[0]) else depart_libre
     if depart is None or not math.isfinite(depart):
         return Planning(True, [], None, True)
-    depart = max(depart, d_bas[0])
+    if partir_a is None:
+        depart = max(depart, d_bas[0])
 
     # On part au plus tard, puis on enchaîne sans attente inutile.
     horaires = [Horaire(depart=depart, retard_depart=max(0.0, depart - d_haut[0]))]
@@ -126,7 +128,28 @@ def planifier(points: list[dict[str, Any]], durees: list[float], depart_libre: f
             h.retard_depart = max(0.0, t - d_haut[i])
         horaires.append(h)
     possible = not any(h.retard_arrivee or h.retard_depart for h in horaires)
+    if not possible and partir_a is not None:
+        bloquant = next(i for i, h in enumerate(horaires) if h.retard_arrivee or h.retard_depart)
     return Planning(possible, horaires, None if possible else bloquant, libre)
+
+
+def besoin_planning(points: list[dict[str, Any]]) -> bool:
+    """Le trajet sort-il de l'ancien modèle (au plus une étape, heure d'arrivée ou de départ) ?"""
+    if len(points) > 3:
+        return True
+    if (points[-1].get("arrivee") or {}).get("type") in (APRES, ENTRE):
+        return True
+    if (points[0].get("depart") or {}).get("type") in (AVANT, ENTRE):
+        return True
+    return len(points) == 3 and (points[1].get("depart") or {}).get("type", "aucune") != "aucune"
+
+
+def bornes_point(points: list[dict[str, Any]], i: int) -> tuple[float, float, float, float]:
+    """(arrivée au plus tôt, au plus tard, départ au plus tôt, au plus tard) du point i."""
+    n = len(points)
+    a = bornes(points[i].get("arrivee")) if i else (-INF, INF)
+    d = bornes(points[i].get("depart")) if i < n - 1 else (-INF, INF)
+    return a[0], a[1], d[0], d[1]
 
 
 def hhmm(m: float | None) -> str:

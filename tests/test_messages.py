@@ -205,8 +205,10 @@ async def test_formulaire_trajet(hass: HomeAssistant, aioclient_mock):
     p = d["points"]
     assert [x["mode"] for x in p[1:]] == ["velo", "transports"] and p[1]["jours"] == ["0"] and p[1]["sejour"] == 5
     assert p[2]["resume"] and p[2]["habituel"]["etapes"][1]["bouts"] and "trace" not in p[2]["habituel"]["etapes"][0]
-    # Réglages du calcul actuel : l'étape y est le détour
-    assert (d["detour_mode"], d["detour_duree"], d["detour_heure"], d["type_heure"], d["heure_depart"]) == ("velo", 7, "08:10:00", "arrivee", "09:00:00")
+    # Arrivée « entre » : trajet calculé point par point ; départ habituel planifié à l'enregistrement
+    # (au plus tard pour arriver à 9 h, l'étape n'ouvrant qu'à 8 h 10 : attente comprise).
+    assert (d["detour_mode"], d["detour_duree"], d["detour_heure"]) == ("velo", 7, "08:10:00")
+    assert d["type_heure"] == "depart" and d["heure_depart"] == d["depart_habituel"] == "08:16:00"
 
 
 async def test_calendrier_sans_workday(hass: HomeAssistant):
