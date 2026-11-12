@@ -121,7 +121,24 @@ const grapheArrets = (arrets, traces, aretes = null) => {
       if (relies(m.a, m.b)) m.via = via; // raccourci : dessiné, mais hors du réseau
       else { voisins[m.a].add(m.b); voisins[m.b].add(m.a); }
     }
-    return { voisins, morceaux };
+    // Chaque tracé s'arrête au droit de l'arrêt sur la voie, pas au même point pour ses deux voisins : on les fait
+    // tous finir au même point (moyenne de leurs bouts), où l'on pose l'arrêt. Plus de trous, arrêts sur la ligne.
+    const d2 = (p, a) => (p[0] - a.lat) ** 2 + ((p[1] - a.lon) * 0.66) ** 2;
+    const bouts = arrets.map(() => []);
+    for (const m of morceaux) {
+      if (!arrets[m.a] || !arrets[m.b] || m.pts.length < 2) continue;
+      const sens = d2(m.pts[0], arrets[m.a]) + d2(m.pts[m.pts.length - 1], arrets[m.b]) <= d2(m.pts[0], arrets[m.b]) + d2(m.pts[m.pts.length - 1], arrets[m.a]);
+      m.debut = sens ? m.a : m.b;
+      bouts[m.debut].push(m.pts[0]);
+      bouts[sens ? m.b : m.a].push(m.pts[m.pts.length - 1]);
+    }
+    const ancres = bouts.map((ps, i) => (ps.length ? [ps.reduce((t, p) => t + p[0], 0) / ps.length, ps.reduce((t, p) => t + p[1], 0) / ps.length] : [arrets[i].lat, arrets[i].lon]));
+    for (const m of morceaux) {
+      if (m.debut === undefined) continue;
+      const fin = m.debut === m.a ? m.b : m.a;
+      m.pts = [ancres[m.debut], ...m.pts, ancres[fin]];
+    }
+    return { voisins, morceaux, ancres };
   }
   const proche = (p) => {
     let meilleur = -1, d = 2.5e-6; // ~150 m
@@ -153,7 +170,7 @@ const grapheArrets = (arrets, traces, aretes = null) => {
 };
 // Ce qui est coupé sur un réseau d'arrêts : arêtes en pointillés, arrêts non desservis (indice → sens, ou "").
 const etatReseau = (arrets, traces, I, aretes = null) => {
-  const { voisins, morceaux } = grapheArrets(arrets, traces, aretes);
+  const { voisins, morceaux, ancres } = grapheArrets(arrets, traces, aretes);
   const noms = arrets.map((a) => a.nom);
   const trouver = (b) => {
     const i = arrets.findIndex((a) => a.id && (b.zones || []).includes(a.id));
@@ -235,7 +252,7 @@ const etatReseau = (arrets, traces, I, aretes = null) => {
     if (m.via?.length) return m.via.every((i) => gris.has(i)); // raccourci : coupé si les gares qu'il longe le sont
     return m.a >= 0 && m.b >= 0 ? coupees.has(cleArete(m.a, m.b)) : m.a >= 0 ? toutCoupe(m.a) : m.b >= 0 && toutCoupe(m.b);
   };
-  return { morceaux, coupees, gris, coupe };
+  return { morceaux, coupees, gris, coupe, ancres };
 };
 // Nom d'arrêt comparable (comme côté intégration) : sans la commune entre parenthèses, sans accents ni ponctuation.
 const nomArret = (t) => String(t || "").replace(/\s*\([^)]*\)\s*$/, "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
@@ -867,7 +884,7 @@ class TransportsIdfCard extends HTMLElement {
       const gris = I.toute || r.gris.has(i);
       if (!plan && !gris) return;
       const sens = r.gris.get(i);
-      L.circleMarker([a.lat, a.lon], gris ? STYLE_NON_DESSERVI : { radius: 3.5, color: couleur, weight: 2, fillColor: "#fff", fillOpacity: 1 })
+      L.circleMarker(r.ancres?.[i] || [a.lat, a.lon], gris ? STYLE_NON_DESSERVI : { radius: 3.5, color: couleur, weight: 2, fillColor: "#fff", fillOpacity: 1 })
         .bindTooltip(echapper(a.nom) + (gris ? " · non desservi" + (sens ? ` direction ${echapper(sens)}` : "") : ""), { direction: "top" })
         .addTo(c.carte);
     });
