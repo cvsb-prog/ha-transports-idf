@@ -5,6 +5,20 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.1.0b4] - 2026-11-13
+
+Pré-version de test : les trajets à étapes sont calculés.
+
+### Ajouté
+
+- Calcul des trajets à étapes : heure de départ planifiée (départ le plus tard possible, puis enchaînement sans attente inutile ; « à partir de » tenu par une attente, « avant » pouvant être manqué), vérifiée tronçon par tronçon avec PRIM (lignes habituelles de chaque tronçon). Borne intenable : rien n'est sauté ni raccourci, retard le plus petit possible, point bloquant indiqué. Étapes retirées les jours où elles n'ont pas lieu.
+- Capteur du trajet : heures et écarts à chaque point (« horaires », « possible ») ; rappel « École 8 h 35 (+5 min) » sur la carte ; écarts dans les alertes.
+- Perturbations surveillées sur tous les tronçons du trajet.
+
+### Modifié
+
+- Les trajets à au plus une étape, sans fenêtre « entre » ou « à partir de » à la destination, gardent le calcul précédent.
+
 ## [1.1.0b3] - 2026-11-12
 
 Pré-version de test.
