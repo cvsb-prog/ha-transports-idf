@@ -425,7 +425,7 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
             for p in par_ligne.get(lid, []):
                 if not concerne_ligne(p, lid):
                     continue
-                niveau = niveau_perturbation(p)
+                niveau = niveau_perturbation(p, pour_trajet=True)
                 if p.get("equipement") or (ignorer_info and niveau in (None, "travaux") and p["information"]):
                     continue
                 if not pertinente(p, etape, reference):

@@ -80,7 +80,8 @@ const decouper = (trace, touches) => {
 // la ligne est coupée (pointillés sur ce tronçon) ; noms = tous les arrêts cités (non desservis, marqués sur la carte).
 // Des arrêts non desservis ne coupent pas la ligne : les trains passent sans s'arrêter.
 const interruptions = (messages) => {
-  const ms = (messages || []).filter((m) => m.niveau === "interrompu");
+  // Arrêts non desservis : marqués quel que soit le niveau (la ligne roule, « perturbé » le plus souvent).
+  const ms = (messages || []).filter((m) => m.niveau === "interrompu" || (m.portee === "arrets" && m.niveau !== "equipement"));
   const portee = (m) => m.portee || ((m.arrets_touches || []).length ? "troncon" : "ligne");
   const auTroncon = ms.filter((m) => portee(m) === "troncon");
   return {

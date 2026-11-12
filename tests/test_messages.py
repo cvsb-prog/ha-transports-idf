@@ -508,3 +508,17 @@ def test_gares_sautees_par_des_trains_passants():
     assert {s["direction"] for s in msgs[0]["sauts"]} == {"Gare E"}  # un seul sens concerné
     assert [(s["de"]["zones"], s["vers"]["zones"]) for s in msgs[0]["sauts"]] == [
         (["stop_area:IDFM:1"], ["stop_area:IDFM:3"]), (["stop_area:IDFM:3"], ["stop_area:IDFM:5"])]
+
+
+def test_niveau_selon_portee_et_texte():
+    """Arrêts non desservis : « perturbé » pour la ligne (elle roule), « interrompu » pour un trajet qui y monte ou descend.
+    Travaux du soir publiés « perturbée » mais « trafic interrompu » dans le texte : interrompu."""
+    from custom_components.transports_idf.api import niveau_perturbation
+
+    arret = {"effet": "NO_SERVICE", "gravite": "bloquante", "portee": "arrets", "titre": "Bus 80 : arrêt non desservi"}
+    assert niveau_perturbation(arret) == "perturbe" and niveau_perturbation(arret, pour_trajet=True) == "interrompu"
+    soiree = {"effet": "SIGNIFICANT_DELAYS", "gravite": "perturbée", "portee": "troncon", "titre": "RER Z : travaux",
+              "message": "Période : les soirées. Le trafic est interrompu entre Gare A et Gare B."}
+    assert niveau_perturbation(soiree) == "interrompu"
+    assert niveau_perturbation({**soiree, "message": "Le trafic est ralenti entre Gare A et Gare B."}) == "perturbe"
+    assert niveau_perturbation({"effet": "NO_SERVICE", "portee": "ligne", "titre": "Métro 7B : trafic interrompu"}) == "interrompu"

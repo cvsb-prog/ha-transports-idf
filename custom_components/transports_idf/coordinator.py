@@ -328,7 +328,7 @@ class Itineraires:
                     vues.setdefault(p.get("id") or p.get("titre"), p)
                 quand = date_navitia(e.get("depart_brut"))
                 touchent = [p for p in vues.values() if pertinente(p, e, quand)]
-                e["messages"] = messages_affiches(touchent, self.ignorer_info)
+                e["messages"] = messages_affiches(touchent, self.ignorer_info, pour_trajet=True)
                 niveau = pire_niveau(m["niveau"] for m in e["messages"] if m["niveau"] != "equipement")
                 e["alerte"] = None if niveau == "normal" else niveau
                 if self.rame is not None:
