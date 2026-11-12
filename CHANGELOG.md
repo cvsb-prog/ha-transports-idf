@@ -13,6 +13,12 @@ Pré-version de test.
 
 - Plans de ligne et cartes de trajet : un tronçon coupé est en pointillés de bout en bout, ses arrêts grisés (seuls ses bouts étaient marqués). Le calcul suit le réseau de la ligne d'arrêt en arrêt, voies parallèles comprises, sans déborder sur les branches.
 - Arrêts non desservis : petits ronds grisés, la ligne en pointillés jusqu'aux arrêts voisins.
+- Terminus au bout d'un tronçon coupé (plus aucun train) grisé ; les autres bouts restent desservis.
+- Plans de ligne sans trous, arrêts posés sur la ligne (et non au centre de leur zone d'arrêt).
+
+### Modifié
+
+- Travaux du soir : la coupure commence à l'heure du premier « dernier départ » annoncé dans le texte, PRIM faisant souvent commencer la période à 23 h (choix provisoire).
 
 ## [1.1.0b2] - 2026-11-12
 
