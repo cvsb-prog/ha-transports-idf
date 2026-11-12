@@ -1251,7 +1251,9 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
                     # PRIM découpe : un message par gare sautée, décrite par ses deux voisines (non comprises).
                     routes |= {r.get("id") for r in section.get("routes") or [] if r.get("id")}
                     bout = lambda x: {"noms": sorted(noms_cites(x)), "zones": sorted(zones_citees(x))}  # noqa: E731
-                    sauts.append({"de": bout(section.get("from")), "vers": bout(section.get("to"))})
+                    # Sens concerné (un seul, le plus souvent) : nom de la direction des parcours cités.
+                    sens = sorted({r.get("name") or (r.get("direction") or {}).get("name") or "" for r in section.get("routes") or []} - {""})
+                    sauts.append({"de": bout(section.get("from")), "vers": bout(section.get("to")), "direction": sens[0] if len(sens) == 1 else None})
                 elif section:
                     routes |= {r.get("id") for r in section.get("routes") or [] if r.get("id")}
                     # Les quais touchés (propres à un sens) s'ils sont donnés, sinon les deux bouts du tronçon.
