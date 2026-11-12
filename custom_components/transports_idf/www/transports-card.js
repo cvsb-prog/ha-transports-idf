@@ -985,6 +985,9 @@ class TransportsIdfCard extends HTMLElement {
     const r = a.rappel;
     if (!a.en_veille || !r) return "";
     if (r.impossible) return `<span class="statut mauvais">arrivée à ${echapper(r.heure_cible)} impossible</span>`;
+    // Trajet à étapes : l'écart à chaque point en retard (« École 8 h 35 (+5 min) »).
+    const ecarts = (r.points || []).filter((p) => p.retard).map((p) => `${echapper(p.nom)} ${echapper(p.arrivee_h || p.depart_h)} (+${p.retard} min)`);
+    if (r.retard && ecarts.length) return `<span class="statut mauvais">${ecarts.join(" · ")}</span>`;
     if (r.retard) return `<span class="statut mauvais">arrivée ${echapper(r.arrivee_h)} (en retard)</span>`;
     let depart = new Date(r.depart_iso).getTime();
     const cible = r.cible_iso ? new Date(r.cible_iso).getTime() : null;

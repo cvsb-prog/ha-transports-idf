@@ -802,9 +802,9 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
     def etapes_habituelles(self, sous_id: str) -> list[dict[str, Any]]:
         sous = self.config_entry.subentries[sous_id]
         etat = self.etats.get(sous_id) or EtatTrajet()
-        etapes = [dict(e) for e in sous.data.get(T_ETAPES) or []]
+        etapes = [dict(e) for e in etapes_trajet(sous.data)]
         if not etapes:
-            etapes = [{"type": "transport", **{k: s.get(k) for k in ("nom", "mode", "couleur", "couleur_texte", "ligne_id", "de", "vers", "direction")}} for s in sous.data.get(T_SECTIONS, [])]
+            etapes = [{"type": "transport", **{k: s.get(k) for k in ("nom", "mode", "couleur", "couleur_texte", "ligne_id", "de", "vers", "direction")}} for s in sections_trajet(sous.data)]
         for e in etapes:
             if e.get("type") == "transport":
                 lid = e.get("ligne_id")
