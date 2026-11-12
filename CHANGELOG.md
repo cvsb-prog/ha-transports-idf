@@ -5,9 +5,23 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.1.0b1] - 2026-11-12
+
+Pré-version de test : à installer à la place de la 1.0.0, retour possible à la 1.0.0 (les trajets restent lisibles par elle).
+
 ### Ajouté
 
+- Trajets à étapes : un trajet est une suite de points (départ, étapes, destination). Pour chacun : façon d'y aller (transports, à pied, à vélo, en voiture), fenêtres d'arrivée et de départ (à partir de, avant, entre), temps minimum sur place, jours de l'étape, itinéraire habituel du tronçon en transports (ou « le plus rapide à chaque fois »).
+- Formulaire des trajets en menu (ajouter, modifier, supprimer, déplacer une étape ; nom, personne, jours ; terminer), avec le résumé du trajet en tête, mis à jour à chaque changement.
 - Intégration continue : bouton « Run workflow » (lancement manuel des tests et de la validation).
+
+### Modifié
+
+- Les trajets existants sont repris au démarrage : le détour devient l'étape 1, son heure imposée une arrivée « à » cette heure.
+
+### Limites connues
+
+- Le calcul des horaires ne tient compte que de la première étape (plusieurs étapes : prochaine pré-version).
 
 ### Corrigé
 
