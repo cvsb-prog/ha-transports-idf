@@ -33,6 +33,9 @@ const DEFAUTS = {
 const GROUPES = ["RER", "Train", "Métro", "Tram"];
 const ICONES = { marche: "🚶", velo: "🚲", voiture: "🚗", transports: "🚌" };
 const NIVEAUX = { interrompu: 3, perturbe: 2, travaux: 1 };
+// Le fond de carte reste clair en thème sombre : traits et arrêts non desservis en gris foncé, cerclés de blanc.
+const GRIS_CARTE = "#37474f";
+const STYLE_NON_DESSERVI = { radius: 6, color: GRIS_CARTE, weight: 2.5, fillColor: "#fff", fillOpacity: 1, dashArray: "3 2" };
 const PASTILLE = { interrompu: "✕", perturbe: "!", travaux: "⚒", equipement: "♿" };
 const LIBELLE_NIVEAU = { interrompu: "trafic interrompu", perturbe: "trafic perturbé", travaux: "travaux", equipement: "ascenseur ou escalier en panne" };
 const GLYPHES = { RER: "RER", Train: "TRAIN", "Métro": "M", Tram: "TRAM", Bus: "BUS" };
@@ -710,15 +713,17 @@ class TransportsIdfCard extends HTMLElement {
     if (places.length) this._elargirCartes();
   }
 
-  // Une ligne sur la carte ; la portion interrompue (ou toute la ligne) en pointillés gris.
+  // Pointillés lisibles sur le fond de carte (toujours clair, même en thème sombre) : liseré blanc, traits foncés.
+  _pointilles(L, c, pts, epaisseur, motif) {
+    L.polyline(pts, { color: "#fff", weight: epaisseur + 4, opacity: 0.85, lineCap: "round", lineJoin: "round" }).addTo(c.carte);
+    L.polyline(pts, { color: GRIS_CARTE, weight: epaisseur, opacity: 1, dashArray: motif, lineCap: "round", lineJoin: "round" }).addTo(c.carte);
+  }
+
+  // Une ligne sur la carte ; la portion interrompue (ou toute la ligne) en pointillés gris foncé.
   _tracer(L, c, points, couleur, toute, touches, epaisseur, sansLisere = false) {
-    const gris = this._sombre() ? "#b0b0b0" : "#757575";
     const lisere = (pts) => !sansLisere && L.polyline(pts, { color: this._sombre() ? "#000" : "#fff", weight: epaisseur + 3, opacity: 0.6 }).addTo(c.carte);
     const plein = (pts) => { lisere(pts); L.polyline(pts, { color: couleur, weight: epaisseur, opacity: 1 }).addTo(c.carte); };
-    const coupe = (pts) => {
-      L.polyline(pts, { color: gris, weight: epaisseur, opacity: 0.25 }).addTo(c.carte);
-      L.polyline(pts, { color: gris, weight: epaisseur - 1, opacity: 1, dashArray: "2 9", lineCap: "round" }).addTo(c.carte);
-    };
+    const coupe = (pts) => this._pointilles(L, c, pts, Math.max(4, epaisseur - 1), "7 7");
     if (toute) return coupe(points);
     const p = decouper(points, touches || []);
     if (!p) return plein(points);
@@ -729,8 +734,7 @@ class TransportsIdfCard extends HTMLElement {
 
   // Arrêt non desservi : rond gris en pointillés, le nom au survol.
   _arretNonDesservi(L, c, pos, nom) {
-    const gris = this._sombre() ? "#b0b0b0" : "#616161";
-    L.circleMarker(pos, { radius: 5, color: gris, weight: 2, fillColor: this._sombre() ? "#333" : "#e0e0e0", fillOpacity: 1, dashArray: "2 2" })
+    L.circleMarker(pos, STYLE_NON_DESSERVI)
       .bindTooltip(`${echapper(nom)} · non desservi`, { direction: "top" })
       .addTo(c.carte);
   }
@@ -757,16 +761,15 @@ class TransportsIdfCard extends HTMLElement {
     c.carte.attributionControl.setPrefix(false);
     this._poserFond(L, c);
     let points = d.trace?.length > 1 ? d.trace : [d.a, d.b].filter(Boolean);
-    const gris = this._sombre() ? "#b0b0b0" : "#616161";
     if (d.segments) {
       // Trajet entier : la marche en pointillés, chaque ligne dans sa couleur (liseré pour les couleurs claires).
       points = d.segments.flatMap((x) => x.points);
       for (const x of d.segments) {
-        if (x.pied) L.polyline(x.points, { color: gris, weight: 4, opacity: 0.9, dashArray: "1 8", lineCap: "round" }).addTo(c.carte);
+        if (x.pied) this._pointilles(L, c, x.points, 5, "1 9");
         else this._tracer(L, c, x.points, x.couleur || couleur, x.interrompu, x.touches, 6);
         for (const a of x.nonDesservis || []) this._arretNonDesservi(L, c, a.pos, a.nom);
       }
-      for (const p of d.points || []) L.circleMarker(p, { radius: 5, color: gris, weight: 2, fillColor: "#fff", fillOpacity: 1 }).addTo(c.carte);
+      for (const p of d.points || []) L.circleMarker(p, { radius: 5, color: GRIS_CARTE, weight: 2, fillColor: "#fff", fillOpacity: 1 }).addTo(c.carte);
     } else if (d.lignes) {
       // Plan d'une ligne : son tracé, ses arrêts ; ceux cités par un message en rouge.
       points = d.lignes.flat();
@@ -777,7 +780,7 @@ class TransportsIdfCard extends HTMLElement {
       for (const a of d.arrets || []) {
         const touche = d.toute || cite(a, d.zones, d.touches);
         L.circleMarker([a.lat, a.lon], touche
-          ? { radius: 4, color: gris, weight: 2, fillColor: this._sombre() ? "#333" : "#e0e0e0", fillOpacity: 1, dashArray: "2 2" }
+          ? STYLE_NON_DESSERVI
           : { radius: 3.5, color: d.couleur || couleur, weight: 2, fillColor: "#fff", fillOpacity: 1 })
           .bindTooltip(echapper(a.nom) + (touche ? " · non desservi" : ""), { direction: "top" })
           .addTo(c.carte);
