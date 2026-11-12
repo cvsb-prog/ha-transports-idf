@@ -974,13 +974,25 @@ def lignes_touchees(donnees: Any) -> dict[str, set[str]]:
     return sortie
 
 
-def niveau_perturbation(p: dict[str, Any]) -> str | None:
-    """interrompu / perturbe / travaux, ou None pour une simple information."""
+_TRAFIC_INTERROMPU = re.compile(r"trafic\s+(?:est\s+|sera\s+)?interrompu", re.I)
+
+
+def niveau_perturbation(p: dict[str, Any], pour_trajet: bool = False) -> str | None:
+    """interrompu / perturbe / travaux, ou None pour une simple information.
+
+    Arrêts non desservis (portée « arrets ») : la ligne roule, donc « perturbé » pour la ligne ; mais
+    « interrompu » pour un trajet qui monte ou descend à l'un de ces arrêts (pour_trajet, après pertinente()).
+    """
     effet = p.get("effet") or "UNKNOWN_EFFECT"
     travaux = "travaux" in f"{p.get('cause') or ''} {p.get('titre') or ''}".lower() or "works" in (p.get("cause") or "").lower()
     gravite = (p.get("gravite") or "").lower()
+    arrets_seuls = p.get("portee") == "arrets"
     # « Bloquante passante » : les trains passent sans s'arrêter à certaines gares, la ligne roule.
-    if effet == "NO_SERVICE" or (gravite.startswith("bloquant") and "passant" not in gravite):
+    bloquante = effet == "NO_SERVICE" or (gravite.startswith("bloquant") and "passant" not in gravite)
+    if bloquante and not (arrets_seuls and not pour_trajet):
+        return "interrompu"
+    # Travaux du soir publiés « perturbée » alors que le texte annonce le trafic interrompu (RER, Transilien).
+    if not arrets_seuls and _TRAFIC_INTERROMPU.search(f"{p.get('titre') or ''} {(p.get('message') or '')[:400]}"):
         return "interrompu"
     if effet not in EFFETS_INFO:
         return "perturbe"
@@ -1360,17 +1372,20 @@ def pertinente(p: dict[str, Any], etape: dict[str, Any], quand: datetime | None 
     return bool(p.get("arrets") and set(p["arrets"]) & bouts)
 
 
-def niveau_message(p: dict[str, Any]) -> str | None:
+def niveau_message(p: dict[str, Any], pour_trajet: bool = False) -> str | None:
     """Niveau affiché d'un message : interrompu / perturbe / travaux / equipement, ou None (simple information)."""
-    return "equipement" if p.get("equipement") else niveau_perturbation(p)
+    return "equipement" if p.get("equipement") else niveau_perturbation(p, pour_trajet)
 
 
-def messages_affiches(perts: list[dict[str, Any]], ignorer_info: bool = True) -> list[dict[str, Any]]:
-    """Messages dédoublonnés (même titre et même texte), du plus grave au moins grave, équipements à la fin."""
+def messages_affiches(perts: list[dict[str, Any]], ignorer_info: bool = True, pour_trajet: bool = False) -> list[dict[str, Any]]:
+    """Messages dédoublonnés (même titre et même texte), du plus grave au moins grave, équipements à la fin.
+
+    pour_trajet : messages d'une étape (déjà filtrés par pertinente()) ; un arrêt non desservi y est bloquant.
+    """
     ordre = {"interrompu": 0, "perturbe": 1, "travaux": 2, None: 3, "equipement": 4}
     vus: dict[tuple[str, str], dict[str, Any]] = {}
     for p in perts:
-        niveau = niveau_message(p)
+        niveau = niveau_message(p, pour_trajet)
         if niveau is None and ignorer_info:
             continue
         cle = (normaliser(p.get("titre")), normaliser(p.get("message")))
