@@ -522,3 +522,15 @@ def test_niveau_selon_portee_et_texte():
     assert niveau_perturbation(soiree) == "interrompu"
     assert niveau_perturbation({**soiree, "message": "Le trafic est ralenti entre Gare A et Gare B."}) == "perturbe"
     assert niveau_perturbation({"effet": "NO_SERVICE", "portee": "ligne", "titre": "Métro 7B : trafic interrompu"}) == "interrompu"
+
+
+def test_debut_des_travaux_du_soir_selon_le_texte():
+    """Période PRIM à partir de 23 h, texte « dernier départ à 21h41 » : la coupure commence à 21 h 41 (choix provisoire)."""
+    from custom_components.transports_idf.api import avancer_periodes
+
+    texte = "Le trafic est interrompu entre Gare A et Gare B : - Dernier départ de Gare A à 21h41 - Dernier départ de Gare B à 22h31."
+    periodes = [["20261112T230000", "20261113T030000"], ["20261113T230000", "20261114T030000"]]
+    assert avancer_periodes(periodes, texte) == [["20261112T214100", "20261113T030000"], ["20261113T214100", "20261114T030000"]]
+    assert avancer_periodes(periodes, "Le trafic est interrompu entre Gare A et Gare B.") == periodes  # rien à lire
+    jour = [["20261112T090000", "20261112T170000"]]
+    assert avancer_periodes(jour, texte) == jour  # période de jour : inchangée
