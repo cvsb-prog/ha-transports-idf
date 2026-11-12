@@ -499,11 +499,12 @@ def test_gares_sautees_par_des_trains_passants():
         return {"id": ident, "status": "active", "severity": {"name": "Bloquante passante", "effect": "MODIFIED_SERVICE"},
                 "messages": [{"text": texte}],
                 "impacted_objects": [{"pt_object": {"id": "line:IDFM:C01727", "embedded_type": "line"},
-                                      "impacted_rail_section": {"from": de, "to": vers, "routes": [{"id": "route:1"}]}}]}
+                                      "impacted_rail_section": {"from": de, "to": vers, "routes": [{"id": "route:1", "name": "Gare E"}]}}]}
     donnees = {"disruptions": [pert("b", gare(1, "Gare A"), gare(3, "Gare C")), pert("d", gare(3, "Gare C"), gare(5, "Gare E"))]}
     perts = analyser_perturbations(donnees)
     assert {p["portee"] for p in perts} == {"arrets"} and all(p["troncon"] == [] for p in perts)
     msgs = messages_affiches(perts)
     assert len(msgs) == 1 and msgs[0]["niveau"] == "perturbe" and msgs[0]["portee"] == "arrets"
+    assert {s["direction"] for s in msgs[0]["sauts"]} == {"Gare E"}  # un seul sens concerné
     assert [(s["de"]["zones"], s["vers"]["zones"]) for s in msgs[0]["sauts"]] == [
         (["stop_area:IDFM:1"], ["stop_area:IDFM:3"]), (["stop_area:IDFM:3"], ["stop_area:IDFM:5"])]

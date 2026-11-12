@@ -93,10 +93,10 @@ const interruptions = (messages) => {
     sauts: (messages || []).filter((m) => m.niveau !== "equipement").flatMap((m) => m.sauts || []),
   };
 };
-// Indices des arrêts sautés : ceux strictement entre « de » et « vers », d'arrêt voisin en arrêt voisin.
+// Arrêts sautés : ceux strictement entre « de » et « vers », d'arrêt voisin en arrêt voisin → Map(indice → sens).
 // arrets : [{id?, nom, lat, lon}] ; voisins : liste d'adjacence (indices).
 const arretsSautes = (sauts, arrets, voisins) => {
-  const sortie = new Set();
+  const sortie = new Map();
   const noms = arrets.map((a) => a.nom);
   const trouver = (b) => {
     const i = arrets.findIndex((a) => a.id && (b.zones || []).includes(a.id));
@@ -112,7 +112,7 @@ const arretsSautes = (sauts, arrets, voisins) => {
       for (const j of voisins[i] || []) if (!avant.has(j)) { avant.set(j, i); file.push(j); }
     }
     if (!avant.has(vers)) continue;
-    for (let i = avant.get(vers); i !== de && i >= 0; i = avant.get(i)) sortie.add(i);
+    for (let i = avant.get(vers); i !== de && i >= 0; i = avant.get(i)) sortie.set(i, x.direction || "");
   }
   return sortie;
 };
@@ -824,7 +824,7 @@ class TransportsIdfCard extends HTMLElement {
         L.circleMarker([a.lat, a.lon], touche
           ? STYLE_NON_DESSERVI
           : { radius: 3.5, color: d.couleur || couleur, weight: 2, fillColor: "#fff", fillOpacity: 1 })
-          .bindTooltip(echapper(a.nom) + (touche ? " · non desservi" : ""), { direction: "top" })
+          .bindTooltip(echapper(a.nom) + (touche ? " · non desservi" + (d.sautes?.get(i) ? ` direction ${echapper(d.sautes.get(i))}` : "") : ""), { direction: "top" })
           .addTo(c.carte);
         if (!d.lignes.length) points.push([a.lat, a.lon]);
       }
@@ -1008,7 +1008,7 @@ class TransportsIdfCard extends HTMLElement {
     if (!plan) return `<div class="sous">Chargement du plan…</div>`;
     if (plan.erreur || (!plan.traces?.length && !plan.arrets?.length)) return `<div class="sous">Plan indisponible.</div>`;
     const { noms, coupe, zones, zonesCoupe, toute, sauts } = interruptions(ligne.perturbations);
-    const sautes = sauts.length ? arretsSautes(sauts, plan.arrets || [], voisinsParTraces(plan.arrets || [], plan.traces || [])) : new Set();
+    const sautes = sauts.length ? arretsSautes(sauts, plan.arrets || [], voisinsParTraces(plan.arrets || [], plan.traces || [])) : new Map();
     this._donneesCartes.set(cle, { lignes: plan.traces || [], arrets: plan.arrets || [], couleur: ligne.couleur || plan.couleur, touches: noms, coupe, zones, zonesCoupe, toute, sautes, b: ici });
     return `<div class="plan plan-ligne"><div class="carte-l" data-carte="${echapper(cle)}"></div></div>`;
   }
