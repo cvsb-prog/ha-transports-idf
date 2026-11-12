@@ -146,35 +146,67 @@ async def test_formulaire_trajet(hass: HomeAssistant, aioclient_mock):
 
     r = await hass.config_entries.subentries.async_init((entree.entry_id, "trajet"), context={"source": "user"})
     champs = [str(k) for k in r["data_schema"].schema]
-    assert "avance" not in champs and "origine" not in champs
-    assert [o["label"] for o in r["data_schema"].schema["type_heure"].config["options"]] == ["Partir à", "Arriver à"]
+    assert "avance" not in champs and "origine" not in champs and "type_heure" not in champs
     assert r["data_schema"].schema["jours"].config["options"][-1] == {"value": "feries", "label": "inclure les jours fériés"}
     r = await hass.config_entries.subentries.async_configure(r["flow_id"], {
-        "nom": "Cours", "personne": "person.alex", "recherche_depart": "gare", "recherche": "denfert",
-        "type_heure": "depart", "heure_depart": "08:00:00", "jours": ["0", "2", "feries"]})
+        "nom": "Cours", "personne": "person.alex", "recherche_depart": "gare", "recherche": "denfert", "jours": ["0", "2", "feries"]})
     assert r["step_id"] == "depart"
     labels = [o["label"] for o in r["data_schema"].schema["depart"].config["options"]]
     assert labels[:2] == ["🏠 Maison", "📌 Bureau"] and labels[2].startswith("[")  or labels[2].startswith("🚏 ")
     r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"depart": "zone|zone.bureau"})
     assert r["step_id"] == "destination"
     r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"destination": "stop_area:IDFM:70000"})
-    assert r["step_id"] == "itineraire"
+    # Destination : arrivée, sans séjour ni fenêtre de départ
+    assert r["step_id"] == "point_destination"
+    champs = [str(k) for k in r["data_schema"].schema]
+    assert "arrivee_type" in champs and "sejour" not in champs and "depart_type" not in champs
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"mode": "transports", "arrivee_type": "entre", "arrivee_debut": "08:45:00"})
+    assert r["errors"] == {"arrivee_fin": "heure_manquante"}
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"mode": "transports", "arrivee_type": "entre", "arrivee_debut": "09:00:00", "arrivee_fin": "08:45:00"})
+    assert r["errors"] == {"arrivee_fin": "fenetre_inversee"}
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"mode": "transports", "arrivee_type": "entre", "arrivee_debut": "08:45:00", "arrivee_fin": "09:00:00"})
+    assert r["type"] is FlowResultType.MENU and r["menu_options"] == ["ajouter", "modifier", "general", "terminer"]
+    assert r["description_placeholders"]["resume"].splitlines() == [
+        "1. **Départ** · Bureau", "2. **Destination** · Denfert-Rochereau (Paris) — 🚌 au plus rapide · arrivée entre 8 h 45 et 9 h 00"]
+
+    # Une étape à vélo entre les deux
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"next_step_id": "ajouter"})
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"recherche": "bourg", "position": "0"})
+    assert r["step_id"] == "lieu"
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"lieu": "stop_area:IDFM:71946"})
+    assert r["step_id"] == "point" and r["description_placeholders"]["point"] == "Étape 1"
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {
+        "mode": "velo", "duree": 7, "arrivee_type": "apres", "arrivee_debut": "08:10:00", "sejour": 5,
+        "depart_type": "aucune", "jours": ["0"]})
+    assert r["type"] is FlowResultType.MENU and r["menu_options"] == ["ajouter", "modifier", "supprimer", "general", "terminer"]
+    lignes = r["description_placeholders"]["resume"].splitlines()
+    assert lignes[1].startswith("2. **Étape 1** · ") and lignes[1].endswith(" — 🚲 7 min · arrivée à partir de 8 h 10 · 5 min sur place · lun")
+
+    # Terminer : itinéraire habituel du seul tronçon en transports (étape → destination)
+    flow = r["flow_id"]
+    r = await hass.config_entries.subentries.async_configure(flow, {"next_step_id": "terminer"})
+    assert r["step_id"] == "itineraire" and r["description_placeholders"]["troncon"] == "Destination"
     options = r["data_schema"].schema["itineraire"].config["options"]
-    assert options[-1]["value"] == "autre"
-    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"itineraire": "autre"})
+    assert [o["value"] for o in options[-2:]] == ["libre", "autre"]
+    assert any("from=stop_area" in str(u) for _, u, *_ in aioclient_mock.mock_calls if "journeys" in str(u))
+    r = await hass.config_entries.subentries.async_configure(flow, {"itineraire": "autre"})
     assert r["step_id"] == "itineraire_autre"
-    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"lignes": "RER Z"})
+    r = await hass.config_entries.subentries.async_configure(flow, {"lignes": "RER Z"})
     assert r["errors"] == {"lignes": "ligne_inconnue"}
-    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"lignes": "192, RER B"})
+    r = await hass.config_entries.subentries.async_configure(flow, {"lignes": "192, RER B"})
     assert r["step_id"] == "itineraire"
-    assert [o["value"] for o in r["data_schema"].schema["itineraire"].config["options"]] == ["0", "autre"]
+    assert [o["value"] for o in r["data_schema"].schema["itineraire"].config["options"]] == ["0", "libre", "autre"]
     appels = [str(u) for _, u, *_ in aioclient_mock.mock_calls if "allowed_id" in str(u)]
     assert appels and "C01192" in appels[-1] and "C01743" in appels[-1]
-    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"itineraire": "0"})
+    r = await hass.config_entries.subentries.async_configure(flow, {"itineraire": "0"})
     assert r["type"] is FlowResultType.CREATE_ENTRY
-    d = r["data"] if "data" in r else next(s for s in entree.subentries.values() if s.subentry_type == "trajet").data
+    d = next(s for s in entree.subentries.values() if s.subentry_type == "trajet").data
     assert d["jours"] == ["0", "2", "feries"] and d["origine"] == "zone.bureau" and d["origine_id"] is None and "avance" not in d
-    assert d["etapes"][1]["bouts"] and "trace" not in d["etapes"][0]
+    p = d["points"]
+    assert [x["mode"] for x in p[1:]] == ["velo", "transports"] and p[1]["jours"] == ["0"] and p[1]["sejour"] == 5
+    assert p[2]["resume"] and p[2]["habituel"]["etapes"][1]["bouts"] and "trace" not in p[2]["habituel"]["etapes"][0]
+    # Réglages du calcul actuel : l'étape y est le détour
+    assert (d["detour_mode"], d["detour_duree"], d["detour_heure"], d["type_heure"], d["heure_depart"]) == ("velo", 7, "08:10:00", "arrivee", "09:00:00")
 
 
 async def test_calendrier_sans_workday(hass: HomeAssistant):
@@ -203,16 +235,25 @@ async def test_modifier_le_depart(hass: HomeAssistant, aioclient_mock):
     await hass.async_block_till_done()
     sous = next(iter(entree.subentries.values()))
     r = await entree.start_subentry_reconfigure_flow(hass, sous.subentry_id)
-    assert r["description_placeholders"]["depart"] == "Maison"
-    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {
-        "nom": "Cours", "personne": "person.alex", "recherche_depart": "gare", "type_heure": "depart", "heure_depart": "08:00:00", "jours": ["0", "1", "feries"]})
+    # Le menu s'ouvre sur le résumé du trajet existant
+    assert r["type"] is FlowResultType.MENU and r["description_placeholders"]["resume"].splitlines() == [
+        "1. **Départ** · Maison — départ à partir de 8 h 00", "2. **Destination** · Denfert-Rochereau — 🚌 x"]
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"next_step_id": "modifier"})
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"point": "0"})
+    assert r["step_id"] == "point_depart"
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"depart_type": "apres", "depart_debut": "08:00:00", "recherche": "gare"})
     assert r["step_id"] == "depart"
     r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"depart": "stop_area:IDFM:71946"})
-    assert r["step_id"] == "itineraire"
+    assert r["type"] is FlowResultType.MENU
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"next_step_id": "general"})
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"nom": "Cours", "personne": "person.alex", "jours": ["0", "1", "feries"]})
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"next_step_id": "terminer"})
+    assert r["step_id"] == "itineraire"  # nouveau départ : itinéraire habituel à rechoisir
     r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"itineraire": "0"})
     assert r["type"] is FlowResultType.ABORT and r["reason"] == "reconfigure_successful"
     d = entree.subentries[sous.subentry_id].data
     assert d["origine_id"] == "stop_area:IDFM:71946" and d["jours"] == ["0", "1", "feries"] and "avance" not in d and d["sections"]
+    assert d["points"][0]["depart"]["debut"] == "08:00:00" and d["heure_depart"] == "08:00:00" and d["type_heure"] == "depart"
 
 
 async def test_rappel_pas_en_retard_si_un_depart_arrive_a_l_heure(hass: HomeAssistant):

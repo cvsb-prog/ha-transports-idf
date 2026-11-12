@@ -170,18 +170,37 @@ async def test_creation_avec_detour(hass: HomeAssistant, aioclient_mock):
     assert await hass.config_entries.async_setup(e.entry_id)
     await hass.async_block_till_done()
     r = await hass.config_entries.subentries.async_init((e.entry_id, "trajet"), context={"source": "user"})
-    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {
-        "nom": "Travail", "personne": "person.alex", "recherche": "denfert",
-        "recherche_detour": "ecole", "type_heure": "arrivee", "heure_depart": "09:00:00", "jours": ["0", "1", "2", "3", "4"]})
-    assert r["step_id"] == "destination"
-    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"destination": "stop_area:IDFM:70000"})
-    assert r["step_id"] == "detour"
-    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"lieu": "stop_area:IDFM:71946", "detour_mode": "velo"})
-    assert r["step_id"] == "detour_reglages" and "calculé par PRIM" in r["description_placeholders"]["calcul"]
+    f = r["flow_id"]
+    etape = lambda donnees: hass.config_entries.subentries.async_configure(f, donnees)  # noqa: E731
+    r = await etape({"nom": "Travail", "personne": "person.alex", "recherche": "denfert", "jours": ["0", "1", "2", "3", "4"]})
+    r = await etape({"destination": "stop_area:IDFM:70000"})
+    r = await etape({"mode": "transports", "arrivee_type": "avant", "arrivee_fin": "09:00:00"})
+    # Étape 1 à vélo : durée vide → calculée par PRIM (400 s → 7 min)
+    r = await etape({"next_step_id": "ajouter"})
+    r = await etape({"recherche": "ecole", "position": "0"})
+    r = await etape({"lieu": "stop_area:IDFM:71946"})
+    assert r["step_id"] == "point" and r["description_placeholders"]["depuis"]
+    r = await etape({"mode": "velo", "arrivee_type": "entre", "arrivee_debut": "08:20:00", "arrivee_fin": "08:20:00", "sejour": 5, "depart_type": "aucune", "jours": ["0", "1", "3"]})
     assert any("direct_path_mode%5B%5D=bike" in str(u) or "direct_path_mode[]=bike" in str(u) for _, u, *_ in aioclient_mock.mock_calls)
-    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"detour_duree": 7, "detour_pause": 5, "detour_heure": "08:20:00", "detour_jours": ["0", "1", "3"]})
-    assert r["step_id"] == "itineraire"
-    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"itineraire": "0"})
+    assert "🚲 7 min · arrivée à 8 h 20 · 5 min sur place · lun, mar, jeu" in r["description_placeholders"]["resume"]
+    # Étape 2 en transports, ajoutée après le départ puis déplacée après l'étape 1
+    r = await etape({"next_step_id": "ajouter"})
+    r = await etape({"recherche": "ecole", "position": "0"})
+    r = await etape({"lieu": "stop_area:IDFM:70000"})
+    r = await etape({"mode": "transports", "arrivee_type": "aucune", "sejour": 10, "depart_type": "avant", "depart_fin": "08:40:00", "jours": ["0", "1", "2", "3", "4"]})
+    assert r["menu_options"][-3:] == ["deplacer", "general", "terminer"]
+    r = await etape({"next_step_id": "deplacer"})
+    r = await etape({"point": "1", "sens": "descendre"})
+    noms = [l.split(" — ")[0] for l in r["description_placeholders"]["resume"].splitlines()]
+    assert [n.split(" · ")[0] for n in noms] == ["1. **Départ**", "2. **Étape 1**", "3. **Étape 2**", "4. **Destination**"]
+    assert "2. **Étape 1** · Bourg-la-Reine" in noms[1] and "en semaine" not in r["description_placeholders"]["resume"].splitlines()[2]
+    # Puis supprimée : on retrouve départ → école → destination
+    r = await etape({"next_step_id": "supprimer"})
+    r = await etape({"point": "2"})
+    assert len(r["description_placeholders"]["resume"].splitlines()) == 3 and "deplacer" not in r["menu_options"]
+    r = await etape({"next_step_id": "terminer"})
+    assert r["step_id"] == "itineraire" and r["description_placeholders"]["destination"] == "Denfert-Rochereau (Paris)"
+    r = await etape({"itineraire": "0"})
     assert r["type"] is FlowResultType.CREATE_ENTRY
     d = next(s for s in e.subentries.values() if s.subentry_type == "trajet").data
     assert (d["detour_mode"], d["detour_duree"], d["detour_heure"], d["detour_jours"], d["jours"]) == ("velo", 7, "08:20:00", ["0", "1", "3"], ["0", "1", "2", "3", "4"])

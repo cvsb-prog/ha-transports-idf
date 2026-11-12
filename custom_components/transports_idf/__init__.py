@@ -33,6 +33,8 @@ from .const import (
     DOMAIN,
     OPT_LIGNES_INTERET,
     SOUS_LIGNE,
+    SOUS_TRAJET,
+    T_ORIGINE,
     VERSION,
 )
 from .coordinator import (
@@ -41,6 +43,7 @@ from .coordinator import (
     PassagesCoordinator,
     coordonnees_zone,
 )
+from .points import T_POINTS, points_depuis_ancien
 from .rame import PositionRame
 from .trajets import TraficCoordinator
 
@@ -201,8 +204,20 @@ def _migrer_lignes(hass: HomeAssistant, entry: TransportsConfigEntry) -> None:
     hass.config_entries.async_update_entry(entry, options={k: v for k, v in entry.options.items() if k != OPT_LIGNES_INTERET})
 
 
+def _migrer_trajets(hass: HomeAssistant, entry: TransportsConfigEntry) -> None:
+    """≤ 1.0 : départ, détour éventuel et destination → une liste de points (le détour devient l'étape 1)."""
+    for sous in list(entry.subentries.values()):
+        if sous.subentry_type != SOUS_TRAJET or sous.data.get(T_POINTS):
+            continue
+        d = dict(sous.data)
+        zone = hass.states.get(d.get(T_ORIGINE) or "zone.home")
+        points = points_depuis_ancien(d, zone.name if zone else None)
+        hass.config_entries.async_update_subentry(entry, sous, data={**d, T_POINTS: points})
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: TransportsConfigEntry) -> bool:
-    _migrer_lignes(hass, entry)  # avant l'écoute des modifications : pas de rechargement en boucle
+    _migrer_lignes(hass, entry)
+    _migrer_trajets(hass, entry)  # avant l'écoute des modifications : pas de rechargement en boucle
     client = ClientPrim(async_get_clientsession(hass), entry.data[CONF_JETON])
     calcul = Itineraires(hass, client)
     passages = PassagesCoordinator(hass, entry, client)
