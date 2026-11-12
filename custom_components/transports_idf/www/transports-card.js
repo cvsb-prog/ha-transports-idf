@@ -105,7 +105,8 @@ const arretsSautes = (sauts, arrets, voisins) => {
   };
   for (const x of sauts || []) {
     const de = trouver(x.de || {}), vers = trouver(x.vers || {});
-    if (de < 0 || vers < 0 || de === vers) continue;
+    if (de < 0 || vers < 0) continue;
+    if (de === vers) { sortie.set(de, x.direction || ""); continue; } // un seul arrêt cité : c'est lui qui est sauté
     const avant = new Map([[de, -1]]);
     const file = [de];
     while (file.length && !avant.has(vers)) {
