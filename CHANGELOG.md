@@ -5,6 +5,24 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.1.0b2] - 2026-11-12
+
+Pré-version de test, comme la 1.1.0b1. Corrections de l'info trafic vérifiées sur un instantané de tout le réseau.
+
+### Ajouté
+
+- Plan d'une ligne : le sens des arrêts non desservis est indiqué au survol (« non desservi direction … »).
+
+### Corrigé
+
+- Gares sautées par des trains « passants » (RER C, bus déviés) : trafic perturbé et non interrompu ; ce sont les gares entre les deux voisines citées qui sont marquées, plus les voisines elles-mêmes.
+- Arrêts non desservis : « trafic perturbé » pour la ligne (elle roule), « trafic interrompu » pour un trajet qui monte ou descend à l'un d'eux. Avant, la même situation était rouge ou orange selon le transporteur.
+- Travaux du soir des RER et Transilien publiés « perturbée » mais annonçant le trafic interrompu : « trafic interrompu » pendant leurs créneaux.
+- Un même texte publié en plusieurs perturbations n'est affiché qu'une fois, avec tout ce qu'elles citent.
+- Arrêt non desservi marqué sur le plan même quand son nom diffère de celui du message (« Saint-Michel » / « Saint-Michel Notre-Dame ») ou quand le message cite un quai.
+- Pointillés (marche, tronçon interrompu) et arrêts non desservis lisibles en thème sombre : gris foncé cerclé de blanc.
+- Ancien trajet enregistré sans rechoisir son itinéraire : départ habituel, durée et résumé de la carte conservés.
+
 ## [1.1.0b1] - 2026-11-12
 
 Pré-version de test : à installer à la place de la 1.0.0, retour possible à la 1.0.0 (les trajets restent lisibles par elle).
