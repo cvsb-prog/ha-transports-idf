@@ -1183,11 +1183,28 @@ def perimee_selon_texte(titre: str, aujourdhui: date) -> bool:
     return fin < aujourdhui
 
 
-def _periodes(d: dict[str, Any]) -> list[tuple[datetime, datetime]]:
-    return [
-        (date_navitia(p.get("begin")) or datetime.min, date_navitia(p.get("end")) or datetime.max)
-        for p in d.get("application_periods") or []
-    ]
+_DERNIER_DEPART = re.compile(
+    r"derni(?:er|ère)s?\s+(?:départ|train|circulation|bus)s?[^.\n]{0,100}?(\d{1,2})\s*h\s*(\d{2})", re.I
+)
+
+
+def avancer_periodes(periodes: list[list[Any]], texte: str) -> list[list[Any]]:
+    """Travaux du soir : PRIM fait souvent commencer la période plus tard que le texte (« dernier départ à 21h41 »,
+    période à partir de 23 h). Le début d'une période du soir est avancé à l'heure du premier dernier départ annoncé.
+
+    Choix provisoire (pas d'avis ferme) : facile à retirer, il ne touche que les débuts de période après 18 h.
+    """
+    heures = sorted((int(h), int(m)) for h, m in _DERNIER_DEPART.findall(texte or "") if 18 <= int(h) <= 23 and int(m) < 60)
+    if not heures:
+        return periodes
+    h, m = heures[0]
+    sortie = []
+    for debut, fin in periodes:
+        d = date_navitia(debut)
+        if d is not None and d.hour >= 18 and (d.hour, d.minute) > (h, m):
+            debut = d.replace(hour=h, minute=m, second=0).strftime("%Y%m%dT%H%M%S")
+        sortie.append([debut, fin])
+    return sortie
 
 
 def active_a(p: dict[str, Any], quand: datetime) -> bool:
@@ -1227,9 +1244,6 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
     for d in (donnees or {}).get("disruptions", []) or []:
         if d.get("status") not in (None, "active", "future"):
             continue
-        periodes = _periodes(d)
-        if periodes and not any(a <= fin_horizon and maintenant <= b for a, b in periodes):
-            continue
         messages = d.get("messages") or []
         titre = next(
             (
@@ -1241,6 +1255,10 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
             None,
         )
         corps = max((_texte(m.get("text")) for m in messages), key=len, default="")
+        periodes_txt = avancer_periodes([[p.get("begin"), p.get("end")] for p in d.get("application_periods") or []], f"{titre or ''} {corps}")
+        periodes = [(date_navitia(a) or datetime.min, date_navitia(b) or datetime.max) for a, b in periodes_txt]
+        if periodes and not any(a <= fin_horizon and maintenant <= b for a, b in periodes):
+            continue
         gravite = d.get("severity") or {}
         ident = d.get("id") or d.get("disruption_id")
         lignes, troncon, arrets, routes, ligne_entiere = [], set(), set(), set(), False
@@ -1308,7 +1326,7 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
                 "information": (gravite.get("effect") or "UNKNOWN_EFFECT") in EFFETS_INFO,
                 "lignes": [l for l in lignes if l],
                 "fin": next((p.get("end") for p in d.get("application_periods") or [] if p.get("end")), None),
-                "periodes": [[p.get("begin"), p.get("end")] for p in d.get("application_periods") or []],
+                "periodes": periodes_txt,
                 # Des arrêts ou un tronçon précisés l'emportent sur la simple mention de la ligne.
                 "portee": "troncon" if troncon else ("arrets" if arrets or sauts else "ligne"),
                 "sauts": sauts,
