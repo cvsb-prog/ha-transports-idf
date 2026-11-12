@@ -992,9 +992,10 @@ class TrajetFlow(_Base):
     def _depart_habituel(points: list[dict[str, Any]]) -> str | None:
         """Départ habituel (veille et rappel) : départ du premier tronçon, d'après les itinéraires choisis."""
         dest = points[-1]
-        depart = (dest.get("habituel") or {}).get("depart")
+        habituel = dest.get("habituel") or {}
+        depart = habituel.get("depart")
         if depart is None:
-            return None
+            return habituel.get("depart_maison")  # ancien trajet, itinéraire pas rechoisi : départ enregistré
         if len(points) == 3:
             e = points[1]
             h, m, *_ = (int(x) for x in depart.split(":"))

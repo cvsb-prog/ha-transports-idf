@@ -459,3 +459,29 @@ def test_arret_non_desservi_rattache_par_son_quai():
     assert p["noms_arrets"] == ["odeon"] and p["zones_arrets"] == ["stop_area:IDFM:7"]
     m = messages_affiches([p])[0]
     assert m["arrets_touches"] == ["odeon"] and m["zones_touchees"] == ["stop_area:IDFM:7"] and m["zones_troncon"] == []
+
+
+async def test_ancien_trajet_enregistre_sans_rechoisir(hass: HomeAssistant, aioclient_mock):
+    """Ancien trajet ouvert puis enregistré tel quel : départ habituel, durée, arrivée et résumé de la carte conservés."""
+    from homeassistant.config_entries import ConfigSubentryData
+
+    hass.states.async_set("zone.home", "0", {"latitude": 48.85, "longitude": 2.30, "friendly_name": "Maison"})
+    hass.states.async_set("person.alex", "home", {"friendly_name": "Alex"})
+    brancher(aioclient_mock, dt_util.utcnow())
+    etapes = [{"type": "marche", "duree": 4}, {"type": "transport", "ligne_id": "line:IDFM:C01743", "bouts": ["x"]}]
+    data = {"nom": "Cours", "personne": "person.alex", "origine": "zone.home", "jours": ["0", "1"], "type_heure": "arrivee", "heure_depart": "09:00:00",
+            "destination_id": "stop_area:IDFM:70000", "destination_nom": "Denfert-Rochereau", "sections": [{"ligne_id": "line:IDFM:C01743"}], "resume": "RER B",
+            "depart_habituel": "08:21:00", "arrivee_habituelle": "08:55:00", "duree": 2040, "etapes": etapes,
+            "detour_id": "poi:ecole", "detour_nom": "École", "detour_mode": "marche", "detour_duree": 6, "detour_pause": 5, "detour_jours": ["0", "1"]}
+    entree = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={"jeton": "abc", "zone": "zone.home"},
+                             subentries_data=[ConfigSubentryData(subentry_type="trajet", title="Cours", unique_id=None, data=data)])
+    entree.add_to_hass(hass)
+    await hass.config_entries.async_setup(entree.entry_id)
+    await hass.async_block_till_done()
+    sous = next(iter(entree.subentries.values()))
+    r = await entree.start_subentry_reconfigure_flow(hass, sous.subentry_id)
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"next_step_id": "terminer"})
+    assert r["type"] is FlowResultType.ABORT and r["reason"] == "reconfigure_successful"
+    d = entree.subentries[sous.subentry_id].data
+    assert (d["depart_habituel"], d["arrivee_habituelle"], d["duree"], d["etapes"]) == ("08:21:00", "08:55:00", 2040, etapes)
+    assert (d["detour_id"], d["detour_duree"], d["type_heure"], d["heure_depart"], d["resume"]) == ("poi:ecole", 6, "arrivee", "09:00:00", "RER B")

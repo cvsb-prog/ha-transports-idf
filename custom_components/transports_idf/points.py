@@ -21,6 +21,10 @@ from typing import Any
 
 from .const import (
     JOURS_DEFAUT,
+    T_ARRIVEE_HABITUELLE,
+    T_DEPART_HABITUEL,
+    T_DUREE,
+    T_ETAPES,
     T_DEST_ID,
     T_DEST_NOM,
     T_DET_DUREE,
@@ -94,11 +98,26 @@ def points_depuis_ancien(d: dict[str, Any], nom_zone: str | None = None) -> list
     destination = point(d.get(T_DEST_NOM) or "Destination", id=d.get(T_DEST_ID), arrivee=fenetre(AVANT, fin=heure) if heure and arrivee else None)
     destination["sections"], destination["resume"] = list(d.get(T_SECTIONS) or []), d.get(T_RESUME) or ""
     sortie.append(destination)
-    return sortie
+    return completer_habituel(sortie, d)
+
+
+def completer_habituel(points: list[dict[str, Any]], d: dict[str, Any]) -> list[dict[str, Any]]:
+    """Ancien trajet : valeurs habituelles (départ de la maison, durée, arrivée, résumé de la carte) reprises
+    sur la destination, tant que son itinéraire n'est pas rechoisi."""
+    dest = points[-1] if points else {}
+    if dest.get("habituel") or not dest.get("resume") or dest.get("resume") != d.get(T_RESUME):
+        return points
+    dest["habituel"] = {
+        "depart": None, "depart_maison": d.get(T_DEPART_HABITUEL), "arrivee": d.get(T_ARRIVEE_HABITUELLE),
+        "duree": d.get(T_DUREE), "etapes": list(d.get(T_ETAPES) or []),
+    }
+    return points
 
 
 def points_du_trajet(d: dict[str, Any], nom_zone: str | None = None) -> list[dict[str, Any]]:
-    return [dict(p) for p in d[T_POINTS]] if d.get(T_POINTS) else points_depuis_ancien(d, nom_zone)
+    if d.get(T_POINTS):
+        return completer_habituel([dict(p) for p in d[T_POINTS]], d)
+    return points_depuis_ancien(d, nom_zone)
 
 
 def cles_anciennes(points: list[dict[str, Any]]) -> dict[str, Any] | None:
