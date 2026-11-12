@@ -5,6 +5,15 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.1.0b3] - 2026-11-12
+
+Pré-version de test.
+
+### Corrigé
+
+- Plans de ligne et cartes de trajet : un tronçon coupé est en pointillés de bout en bout, ses arrêts grisés (seuls ses bouts étaient marqués). Le calcul suit le réseau de la ligne d'arrêt en arrêt, voies parallèles comprises, sans déborder sur les branches.
+- Arrêts non desservis : petits ronds grisés, la ligne en pointillés jusqu'aux arrêts voisins.
+
 ## [1.1.0b2] - 2026-11-12
 
 Pré-version de test, comme la 1.1.0b1. Corrections de l'info trafic vérifiées sur un instantané de tout le réseau.
