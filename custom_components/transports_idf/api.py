@@ -978,7 +978,9 @@ def niveau_perturbation(p: dict[str, Any]) -> str | None:
     """interrompu / perturbe / travaux, ou None pour une simple information."""
     effet = p.get("effet") or "UNKNOWN_EFFECT"
     travaux = "travaux" in f"{p.get('cause') or ''} {p.get('titre') or ''}".lower() or "works" in (p.get("cause") or "").lower()
-    if effet == "NO_SERVICE" or (p.get("gravite") or "").lower().startswith("bloquant"):
+    gravite = (p.get("gravite") or "").lower()
+    # « Bloquante passante » : les trains passent sans s'arrêter à certaines gares, la ligne roule.
+    if effet == "NO_SERVICE" or (gravite.startswith("bloquant") and "passant" not in gravite):
         return "interrompu"
     if effet not in EFFETS_INFO:
         return "perturbe"
@@ -1230,6 +1232,8 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
         lignes, troncon, arrets, routes, ligne_entiere = [], set(), set(), set(), False
         noms_troncon, noms_arrets = set(), set()
         zones_troncon, zones_arrets = set(), set()
+        sauts: list[dict[str, Any]] = []  # tronçons parcourus sans arrêt : gares entre « de » et « vers » non desservies
+        passante = "passant" in (gravite.get("name") or "").lower()
         for o in d.get("impacted_objects", []) or []:
             po = o.get("pt_object") or {}
             type_ = po.get("embedded_type")
@@ -1243,7 +1247,12 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
                 routes.add(po["id"])
             if type_ in ("line", "route", "network"):
                 section = o.get("impacted_section") or o.get("impacted_rail_section")
-                if section:
+                if section and passante and not arrets_o:
+                    # PRIM découpe : un message par gare sautée, décrite par ses deux voisines (non comprises).
+                    routes |= {r.get("id") for r in section.get("routes") or [] if r.get("id")}
+                    bout = lambda x: {"noms": sorted(noms_cites(x)), "zones": sorted(zones_citees(x))}  # noqa: E731
+                    sauts.append({"de": bout(section.get("from")), "vers": bout(section.get("to"))})
+                elif section:
                     routes |= {r.get("id") for r in section.get("routes") or [] if r.get("id")}
                     # Les quais touchés (propres à un sens) s'ils sont donnés, sinon les deux bouts du tronçon.
                     troncon |= arrets_o or (cles_arret(section.get("from")) | cles_arret(section.get("to")))
@@ -1260,7 +1269,7 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
                 arrets |= cles_perturbation(po) | arrets_o
                 noms_arrets |= noms_o | noms_cites(po)
                 zones_arrets |= zones_o | zones_citees(po)
-        if ligne_entiere and not troncon and not arrets and rattachees.get(ident):
+        if ligne_entiere and not troncon and not arrets and not sauts and rattachees.get(ident):
             # Rattachée à la ligne, mais publiée sur certains arrêts seulement (ex. station non desservie).
             cles, noms, zones = rattachees[ident]
             ligne_entiere, arrets = False, set(cles)
@@ -1281,7 +1290,8 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
                 "fin": next((p.get("end") for p in d.get("application_periods") or [] if p.get("end")), None),
                 "periodes": [[p.get("begin"), p.get("end")] for p in d.get("application_periods") or []],
                 # Des arrêts ou un tronçon précisés l'emportent sur la simple mention de la ligne.
-                "portee": "troncon" if troncon else ("arrets" if arrets else "ligne"),
+                "portee": "troncon" if troncon else ("arrets" if arrets or sauts else "ligne"),
+                "sauts": sauts,
                 "troncon": sorted(troncon),
                 "routes": sorted(routes),
                 "arrets": sorted(arrets),
@@ -1362,11 +1372,9 @@ def messages_affiches(perts: list[dict[str, Any]], ignorer_info: bool = True) ->
         if niveau is None and ignorer_info:
             continue
         cle = (normaliser(p.get("titre")), normaliser(p.get("message")))
-        if cle in vus:
-            continue
         troncon = {c[2:] for c in p.get("troncon") or [] if c.startswith("n:")} | set(p.get("noms_troncon") or [])
         arrets = {c[2:] for c in p.get("arrets") or [] if c.startswith("n:")} | set(p.get("noms_arrets") or [])
-        vus[cle] = {
+        m = {
             "id": p.get("id"), "titre": p.get("titre"), "message": p.get("message") if p.get("message") != p.get("titre") else "",
             "niveau": niveau, "fin": p.get("fin"),
             # portee : ligne (toute la ligne coupée), troncon (coupée entre des arrêts), arrets (arrêts non desservis, la ligne roule).
@@ -1376,7 +1384,18 @@ def messages_affiches(perts: list[dict[str, Any]], ignorer_info: bool = True) ->
             # Zones d'arrêt (stop_area) citées : le plan d'une ligne compare ses arrêts par identifiant d'abord.
             "zones_troncon": sorted(set(p.get("zones_troncon") or []) | {c for c in p.get("troncon") or [] if c.startswith("stop_area:")}),
             "zones_touchees": sorted(set(p.get("zones_troncon") or []) | set(p.get("zones_arrets") or []) | {c for c in (p.get("troncon") or []) + (p.get("arrets") or []) if c.startswith("stop_area:")}),
+            "sauts": list(p.get("sauts") or []),
         }
+        deja = vus.get(cle)
+        if deja is None:
+            vus[cle] = m
+            continue
+        # Même texte publié en plusieurs perturbations (une par gare, par tronçon…) : on réunit ce qu'elles citent.
+        for k in ("troncon_touche", "arrets_touches", "zones_troncon", "zones_touchees"):
+            deja[k] = sorted(set(deja[k]) | set(m[k]))
+        deja["sauts"] += [x for x in m["sauts"] if x not in deja["sauts"]]
+        portees = ("arrets", "troncon", "ligne")
+        deja["portee"] = max(deja["portee"], m["portee"], key=portees.index)
     return sorted(vus.values(), key=lambda m: ordre.get(m["niveau"], 3))
 
 
