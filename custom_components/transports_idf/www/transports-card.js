@@ -79,11 +79,26 @@ const decouper = (trace, touches) => {
 const interruptions = (messages) => {
   const ms = (messages || []).filter((m) => m.niveau === "interrompu");
   const portee = (m) => m.portee || ((m.arrets_touches || []).length ? "troncon" : "ligne");
+  const auTroncon = ms.filter((m) => portee(m) === "troncon");
   return {
     noms: new Set(ms.flatMap((m) => m.arrets_touches || [])),
-    coupe: new Set(ms.filter((m) => portee(m) === "troncon").flatMap((m) => m.troncon_touche || m.arrets_touches || [])),
+    coupe: new Set(auTroncon.flatMap((m) => m.troncon_touche || m.arrets_touches || [])),
+    zones: new Set(ms.flatMap((m) => m.zones_touchees || [])),
+    zonesCoupe: new Set(auTroncon.flatMap((m) => m.zones_troncon || [])),
     toute: ms.some((m) => portee(m) === "ligne"),
   };
+};
+// Arrêt cité ? Par sa zone d'arrêt si on la connaît, sinon par son nom : exact, ou l'un prolonge l'autre
+// (« Saint-Michel » dans un message, « Saint-Michel Notre-Dame » sur le plan) quand un seul arrêt correspond.
+const citeParNom = (nom, noms, candidats) => {
+  const n = nomArret(nom);
+  if (!n) return false;
+  if (noms.has(n)) return true;
+  return [...noms].some((x) => {
+    if (!(n.startsWith(x + " ") || x.startsWith(n + " "))) return false;
+    const memes = candidats.filter((c) => { const k = nomArret(c); return k === x || k.startsWith(x + " ") || x.startsWith(k + " "); });
+    return memes.length === 1;
+  });
 };
 // Nom d'arrêt comparable (comme côté intégration) : sans la commune entre parenthèses, sans accents ni ponctuation.
 const nomArret = (t) => String(t || "").replace(/\s*\([^)]*\)\s*$/, "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
@@ -550,8 +565,9 @@ class TransportsIdfCard extends HTMLElement {
       if (!pts) continue;
       if (e.type === "transport") {
         const { noms, coupe, toute } = interruptions(e.messages);
-        const touches = (e.points_arret || []).filter((x) => coupe.has(nomArret(x[0]))).map((x) => [x[1], x[2]]);
-        const nonDesservis = (e.points_arret || []).filter((x) => noms.has(nomArret(x[0])) && !coupe.has(nomArret(x[0]))).map((x) => ({ nom: x[3] || x[0], pos: [x[1], x[2]] }));
+        const tous = (e.points_arret || []).map((x) => x[3] || x[0]);
+        const touches = (e.points_arret || []).filter((x) => citeParNom(x[3] || x[0], coupe, tous)).map((x) => [x[1], x[2]]);
+        const nonDesservis = (e.points_arret || []).filter((x) => citeParNom(x[3] || x[0], noms, tous) && !citeParNom(x[3] || x[0], coupe, tous)).map((x) => ({ nom: x[3] || x[0], pos: [x[1], x[2]] }));
         segments.push({ points: pts, couleur: e.couleur || null, interrompu: toute, touches, nonDesservis });
         correspondances.push(pts[0]);
       } else segments.push({ points: pts, pied: true });
@@ -754,10 +770,12 @@ class TransportsIdfCard extends HTMLElement {
     } else if (d.lignes) {
       // Plan d'une ligne : son tracé, ses arrêts ; ceux cités par un message en rouge.
       points = d.lignes.flat();
-      const touches = (d.arrets || []).filter((a) => d.coupe?.has(nomArret(a.nom))).map((a) => [a.lat, a.lon]);
+      const tous = (d.arrets || []).map((a) => a.nom);
+      const cite = (a, zones, noms) => zones?.has(a.id) || citeParNom(a.nom, noms || new Set(), tous);
+      const touches = (d.arrets || []).filter((a) => cite(a, d.zonesCoupe, d.coupe)).map((a) => [a.lat, a.lon]);
       for (const t of d.lignes) this._tracer(L, c, t, d.couleur || couleur, d.toute, touches, 5, true);
       for (const a of d.arrets || []) {
-        const touche = d.toute || d.touches?.has(nomArret(a.nom));
+        const touche = d.toute || cite(a, d.zones, d.touches);
         L.circleMarker([a.lat, a.lon], touche
           ? { radius: 4, color: gris, weight: 2, fillColor: this._sombre() ? "#333" : "#e0e0e0", fillOpacity: 1, dashArray: "2 2" }
           : { radius: 3.5, color: d.couleur || couleur, weight: 2, fillColor: "#fff", fillOpacity: 1 })
@@ -944,8 +962,8 @@ class TransportsIdfCard extends HTMLElement {
     }
     if (!plan) return `<div class="sous">Chargement du plan…</div>`;
     if (plan.erreur || (!plan.traces?.length && !plan.arrets?.length)) return `<div class="sous">Plan indisponible.</div>`;
-    const { noms, coupe, toute } = interruptions(ligne.perturbations);
-    this._donneesCartes.set(cle, { lignes: plan.traces || [], arrets: plan.arrets || [], couleur: ligne.couleur || plan.couleur, touches: noms, coupe, toute, b: ici });
+    const { noms, coupe, zones, zonesCoupe, toute } = interruptions(ligne.perturbations);
+    this._donneesCartes.set(cle, { lignes: plan.traces || [], arrets: plan.arrets || [], couleur: ligne.couleur || plan.couleur, touches: noms, coupe, zones, zonesCoupe, toute, b: ici });
     return `<div class="plan plan-ligne"><div class="carte-l" data-carte="${echapper(cle)}"></div></div>`;
   }
 

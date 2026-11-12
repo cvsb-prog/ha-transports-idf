@@ -439,3 +439,23 @@ def test_arrets_non_desservis_ne_coupent_pas_la_ligne():
     # Avant : aucun nom pour des quais → toute la ligne en pointillés. Maintenant : arrêts marqués, ligne pleine.
     assert msgs["nd"]["portee"] == "arrets" and msgs["nd"]["troncon_touche"] == [] and msgs["nd"]["arrets_touches"] == ["les blagis", "parc de sceaux"]
     assert msgs["tr"]["portee"] == "troncon" and msgs["tr"]["troncon_touche"] == ["bourg la reine", "denfert rochereau"]
+
+
+def test_arret_non_desservi_rattache_par_son_quai():
+    """Message publié sur un quai (line_reports) : on garde le nom et la zone d'arrêt, pour le marquer sur le plan."""
+    from custom_components.transports_idf.api import analyser_perturbations, messages_affiches
+
+    quai = {"id": "stop_point:IDFM:22", "embedded_type": "stop_point",
+            "stop_point": {"id": "stop_point:IDFM:22", "name": "Odéon", "links": [{"type": "disruption", "id": "od"}],
+                           "stop_area": {"id": "stop_area:IDFM:7", "name": "Odéon"}}}
+    donnees = {
+        "disruptions": [{"id": "od", "status": "active", "severity": {"name": "bloquante", "effect": "NO_SERVICE"},
+                         "messages": [{"text": "Métro 10 : arrêt non desservi", "channel": {"types": ["title"]}}],
+                         "impacted_objects": [{"pt_object": {"id": "line:IDFM:C01380", "embedded_type": "line"}}]}],
+        "line_reports": [{"pt_objects": [quai]}],
+    }
+    p = analyser_perturbations(donnees)[0]
+    assert p["portee"] == "arrets" and p["arrets"] == ["stop_point:IDFM:22"]
+    assert p["noms_arrets"] == ["odeon"] and p["zones_arrets"] == ["stop_area:IDFM:7"]
+    m = messages_affiches([p])[0]
+    assert m["arrets_touches"] == ["odeon"] and m["zones_touchees"] == ["stop_area:IDFM:7"] and m["zones_troncon"] == []
