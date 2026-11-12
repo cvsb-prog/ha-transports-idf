@@ -35,7 +35,7 @@ const ICONES = { marche: "🚶", velo: "🚲", voiture: "🚗", transports: "�
 const NIVEAUX = { interrompu: 3, perturbe: 2, travaux: 1 };
 // Le fond de carte reste clair en thème sombre : traits et arrêts non desservis en gris foncé, cerclés de blanc.
 const GRIS_CARTE = "#37474f";
-const STYLE_NON_DESSERVI = { radius: 6, color: GRIS_CARTE, weight: 2.5, fillColor: "#fff", fillOpacity: 1, dashArray: "3 2" };
+const STYLE_NON_DESSERVI = { radius: 3.5, color: "#757575", weight: 2, fillColor: "#cfcfcf", fillOpacity: 1 };
 const PASTILLE = { interrompu: "✕", perturbe: "!", travaux: "⚒", equipement: "♿" };
 const LIBELLE_NIVEAU = { interrompu: "trafic interrompu", perturbe: "trafic perturbé", travaux: "travaux", equipement: "ascenseur ou escalier en panne" };
 const GLYPHES = { RER: "RER", Train: "TRAIN", "Métro": "M", Tram: "TRAM", Bus: "BUS" };
@@ -59,79 +59,23 @@ const dateNavitia = (x) => {
   return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)).getTime() : null;
 };
 const heureCourte = (h) => (h ? `${Number(h.slice(0, 2))} h ${h.slice(3, 5)}` : "");
-// Portion d'un tracé entre les arrêts touchés les plus éloignés (arrêts à moins de ~200 m du tracé).
-const decouper = (trace, touches) => {
-  if (!trace?.length || touches.length < 2) return null;
-  const proche = (p) => {
-    let i = 0, d = Infinity;
-    trace.forEach((q, n) => {
-      const dd = (q[0] - p[0]) ** 2 + ((q[1] - p[1]) * 0.66) ** 2;
-      if (dd < d) { d = dd; i = n; }
-    });
-    return { i, d };
-  };
-  const idx = touches.map(proche).filter((x) => x.d < 4e-6).map((x) => x.i);
-  if (idx.length < 2) return null;
-  const a = Math.min(...idx), b = Math.max(...idx);
-  return a === b ? null : { avant: trace.slice(0, a + 1), gris: trace.slice(a, b + 1), apres: trace.slice(b) };
-};
-// Messages « interrompu » d'une étape ou d'une ligne → noms d'arrêts touchés, et si toute la ligne l'est.
-// Messages « interrompu » : toute = toute la ligne coupée (pointillés partout) ; coupe = arrêts entre lesquels
-// la ligne est coupée (pointillés sur ce tronçon) ; noms = tous les arrêts cités (non desservis, marqués sur la carte).
-// Des arrêts non desservis ne coupent pas la ligne : les trains passent sans s'arrêter.
+// Messages d'une ligne ou d'une étape → ce qui est coupé ou non desservi, pour les cartes :
+// toute = toute la ligne coupée ; coupures = tronçons coupés (deux bouts, desservis) ; sauts = arrêts sautés entre
+// deux voisins desservis ; noms / zones = arrêts non desservis cités un à un (quel que soit le niveau : la ligne roule).
 const interruptions = (messages) => {
-  // Arrêts non desservis : marqués quel que soit le niveau (la ligne roule, « perturbé » le plus souvent).
-  const ms = (messages || []).filter((m) => m.niveau === "interrompu" || (m.portee === "arrets" && m.niveau !== "equipement"));
+  const ms = (messages || []).filter((m) => m.niveau !== "equipement");
+  const coupants = ms.filter((m) => m.niveau === "interrompu");
   const portee = (m) => m.portee || ((m.arrets_touches || []).length ? "troncon" : "ligne");
-  const auTroncon = ms.filter((m) => portee(m) === "troncon");
+  const auTroncon = coupants.filter((m) => portee(m) === "troncon");
+  const listes = auTroncon.filter((m) => !(m.coupures || []).length); // arrêts du tronçon coupé donnés un à un
+  const arrets = ms.filter((m) => m.portee === "arrets");
   return {
-    noms: new Set(ms.flatMap((m) => m.arrets_touches || [])),
-    coupe: new Set(auTroncon.flatMap((m) => m.troncon_touche || m.arrets_touches || [])),
-    zones: new Set(ms.flatMap((m) => m.zones_touchees || [])),
-    zonesCoupe: new Set(auTroncon.flatMap((m) => m.zones_troncon || [])),
-    toute: ms.some((m) => portee(m) === "ligne"),
-    // Gares sautées (trains « passants ») : entre « de » et « vers », quel que soit le niveau du message.
-    sauts: (messages || []).filter((m) => m.niveau !== "equipement").flatMap((m) => m.sauts || []),
+    toute: coupants.some((m) => portee(m) === "ligne"),
+    coupures: auTroncon.flatMap((m) => m.coupures || []),
+    sauts: ms.flatMap((m) => m.sauts || []),
+    noms: new Set([...listes.flatMap((m) => m.troncon_touche || m.arrets_touches || []), ...arrets.flatMap((m) => m.arrets_touches || [])]),
+    zones: new Set([...listes.flatMap((m) => m.zones_troncon || []), ...arrets.flatMap((m) => m.zones_touchees || [])]),
   };
-};
-// Arrêts sautés : ceux strictement entre « de » et « vers », d'arrêt voisin en arrêt voisin → Map(indice → sens).
-// arrets : [{id?, nom, lat, lon}] ; voisins : liste d'adjacence (indices).
-const arretsSautes = (sauts, arrets, voisins) => {
-  const sortie = new Map();
-  const noms = arrets.map((a) => a.nom);
-  const trouver = (b) => {
-    const i = arrets.findIndex((a) => a.id && (b.zones || []).includes(a.id));
-    return i >= 0 ? i : arrets.findIndex((a) => citeParNom(a.nom, new Set(b.noms || []), noms));
-  };
-  for (const x of sauts || []) {
-    const de = trouver(x.de || {}), vers = trouver(x.vers || {});
-    if (de < 0 || vers < 0) continue;
-    if (de === vers) { sortie.set(de, x.direction || ""); continue; } // un seul arrêt cité : c'est lui qui est sauté
-    const avant = new Map([[de, -1]]);
-    const file = [de];
-    while (file.length && !avant.has(vers)) {
-      const i = file.shift();
-      for (const j of voisins[i] || []) if (!avant.has(j)) { avant.set(j, i); file.push(j); }
-    }
-    if (!avant.has(vers)) continue;
-    for (let i = avant.get(vers); i !== de && i >= 0; i = avant.get(i)) sortie.set(i, x.direction || "");
-  }
-  return sortie;
-};
-// Plan d'une ligne : arrêts voisins d'après les tracés (arrêts rencontrés le long de chaque tracé, dans l'ordre).
-const voisinsParTraces = (arrets, traces) => {
-  const voisins = arrets.map(() => new Set());
-  const proche = (p) => {
-    let meilleur = -1, d = 4e-6;
-    arrets.forEach((a, i) => { const x = (a.lat - p[0]) ** 2 + (a.lon - p[1]) ** 2; if (x < d) { d = x; meilleur = i; } });
-    return meilleur;
-  };
-  for (const t of traces || []) {
-    const suite = [];
-    for (const p of t) { const i = proche(p); if (i >= 0 && suite[suite.length - 1] !== i) suite.push(i); }
-    for (let k = 1; k < suite.length; k++) { voisins[suite[k - 1]].add(suite[k]); voisins[suite[k]].add(suite[k - 1]); }
-  }
-  return voisins;
 };
 // Arrêt cité ? Par sa zone d'arrêt si on la connaît, sinon par son nom : exact, ou l'un prolonge l'autre
 // (« Saint-Michel » dans un message, « Saint-Michel Notre-Dame » sur le plan) quand un seul arrêt correspond.
@@ -144,6 +88,139 @@ const citeParNom = (nom, noms, candidats) => {
     const memes = candidats.filter((c) => { const k = nomArret(c); return k === x || k.startsWith(x + " ") || x.startsWith(k + " "); });
     return memes.length === 1;
   });
+};
+const cleArete = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+// Réseau d'arrêts d'après les tracés : arrêts rencontrés le long de chaque tracé, dans l'ordre, et morceaux de tracé
+// entre deux arrêts voisins (a, b : indices ; -1 au-delà du premier ou du dernier arrêt d'un tracé).
+const grapheArrets = (arrets, traces, aretes = null) => {
+  const voisins = arrets.map(() => new Set());
+  const morceaux = [];
+  if (aretes?.length === traces?.length) {
+    // Plan d'une ligne : l'intégration donne les deux arrêts de chaque tracé (plus sûr que la proximité).
+    // Un tracé qui passe par d'autres arrêts (trains directs, qui sautent des gares) ne relie pas ses deux bouts
+    // dans le réseau, si ces arrêts les relient déjà : sinon un tronçon coupé « sauterait » ces gares.
+    const pres = (t, a, b) => arrets.map((x, i) => i).filter((i) => i !== a && i !== b
+      && t.some((p) => (arrets[i].lat - p[0]) ** 2 + ((arrets[i].lon - p[1]) * 0.66) ** 2 < 2.5e-6));
+    const candidats = [];
+    traces.forEach((t, k) => {
+      const [a, b] = aretes[k];
+      const m = { a, b, pts: t, via: [] };
+      morceaux.push(m);
+      if (!voisins[a] || !voisins[b]) return;
+      const via = pres(t, a, b);
+      if (via.length) candidats.push({ m, via });
+      else { voisins[a].add(b); voisins[b].add(a); }
+    });
+    const relies = (a, b) => {
+      const vus = new Set([a]);
+      const file = [a];
+      while (file.length) { const i = file.shift(); if (i === b) return true; for (const j of voisins[i]) if (!vus.has(j)) { vus.add(j); file.push(j); } }
+      return false;
+    };
+    for (const { m, via } of candidats) {
+      if (relies(m.a, m.b)) m.via = via; // raccourci : dessiné, mais hors du réseau
+      else { voisins[m.a].add(m.b); voisins[m.b].add(m.a); }
+    }
+    return { voisins, morceaux };
+  }
+  const proche = (p) => {
+    let meilleur = -1, d = 2.5e-6; // ~150 m
+    arrets.forEach((a, i) => { const x = (a.lat - p[0]) ** 2 + ((a.lon - p[1]) * 0.66) ** 2; if (x < d) { d = x; meilleur = i; } });
+    return meilleur;
+  };
+  for (const t of traces || []) {
+    if (!t || t.length < 2) continue;
+    const marques = [];
+    t.forEach((p, v) => {
+      const i = proche(p);
+      if (i < 0) return;
+      const der = marques[marques.length - 1];
+      if (der && der.i === i) der.v2 = v;
+      else marques.push({ i, v, v2: v });
+    });
+    if (!marques.length) { morceaux.push({ a: -1, b: -1, pts: t }); continue; }
+    if (marques[0].v > 0) morceaux.push({ a: -1, b: marques[0].i, pts: t.slice(0, marques[0].v + 1) });
+    for (let k = 1; k < marques.length; k++) {
+      const m0 = marques[k - 1], m1 = marques[k];
+      voisins[m0.i].add(m1.i);
+      voisins[m1.i].add(m0.i);
+      morceaux.push({ a: m0.i, b: m1.i, pts: t.slice(m0.v2, m1.v + 1) });
+    }
+    const der = marques[marques.length - 1];
+    if (der.v2 < t.length - 1) morceaux.push({ a: der.i, b: -1, pts: t.slice(der.v2) });
+  }
+  return { voisins, morceaux };
+};
+// Ce qui est coupé sur un réseau d'arrêts : arêtes en pointillés, arrêts non desservis (indice → sens, ou "").
+const etatReseau = (arrets, traces, I, aretes = null) => {
+  const { voisins, morceaux } = grapheArrets(arrets, traces, aretes);
+  const noms = arrets.map((a) => a.nom);
+  const trouver = (b) => {
+    const i = arrets.findIndex((a) => a.id && (b.zones || []).includes(a.id));
+    return i >= 0 ? i : arrets.findIndex((a) => citeParNom(a.nom, new Set(b.noms || []), noms));
+  };
+  // Longueur (m) de chaque arête, d'après ses tracés : un tronçon coupé comprend tous les arrêts sur un chemin
+  // à peine plus long que le plus court (voies parallèles, trains directs), pas les branches qui s'en écartent.
+  const metres = (pts) => pts.reduce((t, p, k) => (k ? t + Math.hypot(p[0] - pts[k - 1][0], (p[1] - pts[k - 1][1]) * 0.66) * 111000 : 0), 0);
+  const poids = new Map();
+  for (const m of morceaux) {
+    if (m.a < 0 || m.b < 0) continue;
+    const l = Math.max(1, metres(m.pts)), k = cleArete(m.a, m.b);
+    poids.set(k, Math.min(poids.get(k) ?? Infinity, l));
+  }
+  const w = (i, j) => poids.get(cleArete(i, j)) ?? Math.hypot(arrets[i].lat - arrets[j].lat, (arrets[i].lon - arrets[j].lon) * 0.66) * 111000;
+  const distances = (de) => {
+    const d = arrets.map(() => Infinity);
+    d[de] = 0;
+    const faits = new Set();
+    for (;;) {
+      let i = -1;
+      d.forEach((x, k) => { if (!faits.has(k) && x < Infinity && (i < 0 || x < d[i])) i = k; });
+      if (i < 0) break;
+      faits.add(i);
+      for (const j of voisins[i]) d[j] = Math.min(d[j], d[i] + w(i, j));
+    }
+    return d;
+  };
+  const coupees = new Set();
+  const gris = new Map();
+  const seuls = new Set(); // arrêts non desservis cités un à un (pas l'intérieur d'un tronçon)
+  const suivre = (x, sens) => {
+    const de = trouver(x.de || {}), vers = trouver(x.vers || {});
+    if (de < 0 || vers < 0) return;
+    if (de === vers) { gris.set(de, sens); seuls.add(de); return; } // un seul arrêt cité : c'est lui
+    const d1 = distances(de), d2 = distances(vers);
+    const total = d1[vers];
+    if (!Number.isFinite(total)) return;
+    const borne = total * 1.1 + 300;
+    // Entre les deux bouts : plus près de chacun que l'autre bout ne l'est (rien au-delà des bouts).
+    const dedans = (i) => i === de || i === vers || (d1[i] < total && d2[i] < total && d1[i] + d2[i] <= borne);
+    arrets.forEach((_, i) => {
+      if (i !== de && i !== vers && dedans(i)) gris.set(i, sens || gris.get(i) || "");
+    });
+    arrets.forEach((_, i) => {
+      for (const j of voisins[i]) {
+        if (i < j && dedans(i) && dedans(j) && Math.min(d1[i] + w(i, j) + d2[j], d1[j] + w(i, j) + d2[i]) <= borne) coupees.add(cleArete(i, j));
+      }
+    });
+  };
+  for (const x of I.coupures || []) suivre(x, "");
+  for (const x of I.sauts || []) suivre(x, x.direction || "");
+  arrets.forEach((a, i) => {
+    if ((a.id && I.zones?.has(a.id)) || citeParNom(a.nom, I.noms || new Set(), noms)) {
+      if (!gris.has(i)) gris.set(i, "");
+      seuls.add(i);
+    }
+  });
+  // Autour d'un arrêt non desservi, la ligne passe en pointillés jusqu'aux arrêts voisins.
+  for (const g of seuls) for (const n of voisins[g]) coupees.add(cleArete(g, n));
+  // Morceau au-delà du dernier arrêt d'un tracé (voie de service…) : coupé si tout ce qui part de cet arrêt l'est.
+  const toutCoupe = (i) => voisins[i].size > 0 && [...voisins[i]].every((n) => coupees.has(cleArete(i, n)));
+  const coupe = (m) => {
+    if (m.via?.length) return m.via.every((i) => gris.has(i)); // raccourci : coupé si les gares qu'il longe le sont
+    return m.a >= 0 && m.b >= 0 ? coupees.has(cleArete(m.a, m.b)) : m.a >= 0 ? toutCoupe(m.a) : m.b >= 0 && toutCoupe(m.b);
+  };
+  return { morceaux, coupees, gris, coupe };
 };
 // Nom d'arrêt comparable (comme côté intégration) : sans la commune entre parenthèses, sans accents ni ponctuation.
 const nomArret = (t) => String(t || "").replace(/\s*\([^)]*\)\s*$/, "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
@@ -609,13 +686,8 @@ class TransportsIdfCard extends HTMLElement {
       const pts = e.trace?.length > 1 ? e.trace : parArrets || (e.de_coord && e.vers_coord ? [e.de_coord, e.vers_coord] : null);
       if (!pts) continue;
       if (e.type === "transport") {
-        const { noms, coupe, toute, sauts } = interruptions(e.messages);
-        const tous = (e.points_arret || []).map((x) => x[3] || x[0]);
-        // Arrêts parcourus dans l'ordre : chacun voisin du suivant.
-        const sautes = arretsSautes(sauts, tous.map((nom) => ({ nom })), tous.map((_, i) => [i - 1, i + 1].filter((j) => j >= 0 && j < tous.length)));
-        const touches = (e.points_arret || []).filter((x) => citeParNom(x[3] || x[0], coupe, tous)).map((x) => [x[1], x[2]]);
-        const nonDesservis = (e.points_arret || []).filter((x, i) => sautes.has(i) || (citeParNom(x[3] || x[0], noms, tous) && !citeParNom(x[3] || x[0], coupe, tous))).map((x) => ({ nom: x[3] || x[0], pos: [x[1], x[2]] }));
-        segments.push({ points: pts, couleur: e.couleur || null, interrompu: toute, touches, nonDesservis });
+        const arrets = (e.points_arret || []).map((x) => ({ nom: x[3] || x[0], lat: x[1], lon: x[2] }));
+        segments.push({ points: pts, couleur: e.couleur || null, arrets, etat: interruptions(e.messages) });
         correspondances.push(pts[0]);
       } else segments.push({ points: pts, pied: true });
     }
@@ -763,24 +835,27 @@ class TransportsIdfCard extends HTMLElement {
     L.polyline(pts, { color: GRIS_CARTE, weight: epaisseur, opacity: 1, dashArray: motif, lineCap: "round", lineJoin: "round" }).addTo(c.carte);
   }
 
-  // Une ligne sur la carte ; la portion interrompue (ou toute la ligne) en pointillés gris foncé.
-  _tracer(L, c, points, couleur, toute, touches, epaisseur, sansLisere = false) {
-    const lisere = (pts) => !sansLisere && L.polyline(pts, { color: this._sombre() ? "#000" : "#fff", weight: epaisseur + 3, opacity: 0.6 }).addTo(c.carte);
-    const plein = (pts) => { lisere(pts); L.polyline(pts, { color: couleur, weight: epaisseur, opacity: 1 }).addTo(c.carte); };
-    const coupe = (pts) => this._pointilles(L, c, pts, Math.max(4, epaisseur - 1), "7 7");
-    if (toute) return coupe(points);
-    const p = decouper(points, touches || []);
-    if (!p) return plein(points);
-    plein(p.avant);
-    plein(p.apres);
-    coupe(p.gris);
-  }
-
-  // Arrêt non desservi : rond gris en pointillés, le nom au survol.
-  _arretNonDesservi(L, c, pos, nom) {
-    L.circleMarker(pos, STYLE_NON_DESSERVI)
-      .bindTooltip(`${echapper(nom)} · non desservi`, { direction: "top" })
-      .addTo(c.carte);
+  // Une ligne et ses arrêts : tronçons coupés et abords des arrêts non desservis en pointillés, arrêts non desservis
+  // grisés. plan : plan d'une ligne (tous ses arrêts, pas de liseré) ; sinon une étape de trajet (arrêts grisés seuls).
+  _dessinerLigne(L, c, arrets, traces, I, couleur, epaisseur, plan = false, aretes = null) {
+    const r = etatReseau(arrets, traces, I, aretes);
+    for (const m of r.morceaux) {
+      if (m.pts.length < 2) continue;
+      if (I.toute || r.coupe(m)) {
+        this._pointilles(L, c, m.pts, Math.max(4, epaisseur - 1), "7 7");
+        continue;
+      }
+      if (!plan) L.polyline(m.pts, { color: this._sombre() ? "#000" : "#fff", weight: epaisseur + 3, opacity: 0.6 }).addTo(c.carte);
+      L.polyline(m.pts, { color: couleur, weight: epaisseur, opacity: 1, lineCap: "round", lineJoin: "round" }).addTo(c.carte);
+    }
+    arrets.forEach((a, i) => {
+      const gris = I.toute || r.gris.has(i);
+      if (!plan && !gris) return;
+      const sens = r.gris.get(i);
+      L.circleMarker([a.lat, a.lon], gris ? STYLE_NON_DESSERVI : { radius: 3.5, color: couleur, weight: 2, fillColor: "#fff", fillOpacity: 1 })
+        .bindTooltip(echapper(a.nom) + (gris ? " · non desservi" + (sens ? ` direction ${echapper(sens)}` : "") : ""), { direction: "top" })
+        .addTo(c.carte);
+    });
   }
 
   async _creerCarte(cle, c) {
@@ -810,26 +885,14 @@ class TransportsIdfCard extends HTMLElement {
       points = d.segments.flatMap((x) => x.points);
       for (const x of d.segments) {
         if (x.pied) this._pointilles(L, c, x.points, 5, "1 9");
-        else this._tracer(L, c, x.points, x.couleur || couleur, x.interrompu, x.touches, 6);
-        for (const a of x.nonDesservis || []) this._arretNonDesservi(L, c, a.pos, a.nom);
+        else this._dessinerLigne(L, c, x.arrets || [], [x.points], x.etat || {}, x.couleur || couleur, 6);
       }
       for (const p of d.points || []) L.circleMarker(p, { radius: 5, color: GRIS_CARTE, weight: 2, fillColor: "#fff", fillOpacity: 1 }).addTo(c.carte);
     } else if (d.lignes) {
-      // Plan d'une ligne : son tracé, ses arrêts ; ceux cités par un message en rouge.
+      // Plan d'une ligne : son tracé, ses arrêts ; tronçons coupés en pointillés, arrêts non desservis grisés.
       points = d.lignes.flat();
-      const tous = (d.arrets || []).map((a) => a.nom);
-      const cite = (a, zones, noms) => zones?.has(a.id) || citeParNom(a.nom, noms || new Set(), tous);
-      const touches = (d.arrets || []).filter((a) => cite(a, d.zonesCoupe, d.coupe)).map((a) => [a.lat, a.lon]);
-      for (const t of d.lignes) this._tracer(L, c, t, d.couleur || couleur, d.toute, touches, 5, true);
-      for (const [i, a] of (d.arrets || []).entries()) {
-        const touche = d.toute || d.sautes?.has(i) || cite(a, d.zones, d.touches);
-        L.circleMarker([a.lat, a.lon], touche
-          ? STYLE_NON_DESSERVI
-          : { radius: 3.5, color: d.couleur || couleur, weight: 2, fillColor: "#fff", fillOpacity: 1 })
-          .bindTooltip(echapper(a.nom) + (touche ? " · non desservi" + (d.sautes?.get(i) ? ` direction ${echapper(d.sautes.get(i))}` : "") : ""), { direction: "top" })
-          .addTo(c.carte);
-        if (!d.lignes.length) points.push([a.lat, a.lon]);
-      }
+      this._dessinerLigne(L, c, d.arrets || [], d.lignes, d.etat || {}, d.couleur || couleur, 5, true, d.aretes);
+      if (!d.lignes.length) points.push(...(d.arrets || []).map((a) => [a.lat, a.lon]));
     } else if (d.trace?.length > 1) L.polyline(points, { color: couleur, weight: 5, opacity: 0.9 }).addTo(c.carte);
     else if (d.ligne !== false && points.length > 1) L.polyline(points, { color: couleur, weight: 3, opacity: 0.7, dashArray: "6 6" }).addTo(c.carte);
     if (d.a) L.circleMarker(d.a, { radius: 6, color: "#fff", weight: 2, fillColor: "#757575", fillOpacity: 1 }).addTo(c.carte);
@@ -1009,9 +1072,7 @@ class TransportsIdfCard extends HTMLElement {
     }
     if (!plan) return `<div class="sous">Chargement du plan…</div>`;
     if (plan.erreur || (!plan.traces?.length && !plan.arrets?.length)) return `<div class="sous">Plan indisponible.</div>`;
-    const { noms, coupe, zones, zonesCoupe, toute, sauts } = interruptions(ligne.perturbations);
-    const sautes = sauts.length ? arretsSautes(sauts, plan.arrets || [], voisinsParTraces(plan.arrets || [], plan.traces || [])) : new Map();
-    this._donneesCartes.set(cle, { lignes: plan.traces || [], arrets: plan.arrets || [], couleur: ligne.couleur || plan.couleur, touches: noms, coupe, zones, zonesCoupe, toute, sautes, b: ici });
+    this._donneesCartes.set(cle, { lignes: plan.traces || [], aretes: plan.aretes || null, arrets: plan.arrets || [], couleur: ligne.couleur || plan.couleur, etat: interruptions(ligne.perturbations), b: ici });
     return `<div class="plan plan-ligne"><div class="carte-l" data-carte="${echapper(cle)}"></div></div>`;
   }
 

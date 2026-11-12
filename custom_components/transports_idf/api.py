@@ -216,6 +216,8 @@ class ClientPrim:
         plan = {
             **brut,
             "traces": _alleger_tout(traces, 2500),
+            # Arrêts aux deux bouts de chaque tracé (indices dans « arrets ») : le réseau de la ligne pour les cartes.
+            "aretes": [[a, b] for a, b in troncons] if troncons else [],
             "graphe": {"noeuds": noeuds, "troncons": [[a, b, t] for (a, b), t in troncons.items()]},
         }
         _LOGGER.debug("Plan de %s : %d formes → %d tronçons, %d arrêts", ligne_id, len(brut["traces"]), len(troncons), len(noeuds))
@@ -1245,6 +1247,7 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
         noms_troncon, noms_arrets = set(), set()
         zones_troncon, zones_arrets = set(), set()
         sauts: list[dict[str, Any]] = []  # tronçons parcourus sans arrêt : gares entre « de » et « vers » non desservies
+        coupures: list[dict[str, Any]] = []  # tronçons coupés décrits par leurs deux bouts (pour les plans de ligne)
         passante = "passant" in (gravite.get("name") or "").lower()
         for o in d.get("impacted_objects", []) or []:
             po = o.get("pt_object") or {}
@@ -1272,6 +1275,9 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
                     troncon |= arrets_o or (cles_arret(section.get("from")) | cles_arret(section.get("to")))
                     bouts = noms_cites(section.get("from")) | noms_cites(section.get("to"))
                     noms_troncon |= noms_o or bouts
+                    if not noms_o:
+                        bout2 = lambda x: {"noms": sorted(noms_cites(x)), "zones": sorted(zones_citees(x))}  # noqa: E731
+                        coupures.append({"de": bout2(section.get("from")), "vers": bout2(section.get("to"))})
                     zones_troncon |= zones_o or (zones_citees(section.get("from")) | zones_citees(section.get("to")))
                 elif arrets_o:
                     arrets |= arrets_o
@@ -1306,6 +1312,7 @@ def analyser_perturbations(donnees: Any, maintenant: datetime | None = None, hor
                 # Des arrêts ou un tronçon précisés l'emportent sur la simple mention de la ligne.
                 "portee": "troncon" if troncon else ("arrets" if arrets or sauts else "ligne"),
                 "sauts": sauts,
+                "coupures": coupures,
                 "troncon": sorted(troncon),
                 "routes": sorted(routes),
                 "arrets": sorted(arrets),
@@ -1402,6 +1409,7 @@ def messages_affiches(perts: list[dict[str, Any]], ignorer_info: bool = True, po
             "zones_troncon": sorted(set(p.get("zones_troncon") or []) | {c for c in p.get("troncon") or [] if c.startswith("stop_area:")}),
             "zones_touchees": sorted(set(p.get("zones_troncon") or []) | set(p.get("zones_arrets") or []) | {c for c in (p.get("troncon") or []) + (p.get("arrets") or []) if c.startswith("stop_area:")}),
             "sauts": list(p.get("sauts") or []),
+            "coupures": list(p.get("coupures") or []),
         }
         deja = vus.get(cle)
         if deja is None:
@@ -1411,6 +1419,7 @@ def messages_affiches(perts: list[dict[str, Any]], ignorer_info: bool = True, po
         for k in ("troncon_touche", "arrets_touches", "zones_troncon", "zones_touchees"):
             deja[k] = sorted(set(deja[k]) | set(m[k]))
         deja["sauts"] += [x for x in m["sauts"] if x not in deja["sauts"]]
+        deja["coupures"] += [x for x in m["coupures"] if x not in deja["coupures"]]
         portees = ("arrets", "troncon", "ligne")
         deja["portee"] = max(deja["portee"], m["portee"], key=portees.index)
     return sorted(vus.values(), key=lambda m: ordre.get(m["niveau"], 3))
