@@ -185,10 +185,12 @@ const etatReseau = (arrets, traces, I, aretes = null) => {
   const coupees = new Set();
   const gris = new Map();
   const seuls = new Set(); // arrêts non desservis cités un à un (pas l'intérieur d'un tronçon)
+  const bouts = new Set(); // bouts des tronçons coupés : desservis s'il reste une voie ouverte
   const suivre = (x, sens) => {
     const de = trouver(x.de || {}), vers = trouver(x.vers || {});
     if (de < 0 || vers < 0) return;
     if (de === vers) { gris.set(de, sens); seuls.add(de); return; } // un seul arrêt cité : c'est lui
+    if (!sens) { bouts.add(de); bouts.add(vers); }
     const d1 = distances(de), d2 = distances(vers);
     const total = d1[vers];
     if (!Number.isFinite(total)) return;
@@ -216,6 +218,19 @@ const etatReseau = (arrets, traces, I, aretes = null) => {
   for (const g of seuls) for (const n of voisins[g]) coupees.add(cleArete(g, n));
   // Morceau au-delà du dernier arrêt d'un tracé (voie de service…) : coupé si tout ce qui part de cet arrêt l'est.
   const toutCoupe = (i) => voisins[i].size > 0 && [...voisins[i]].every((n) => coupees.has(cleArete(i, n)));
+  // Bout d'un tronçon coupé dont toutes les voies sont coupées (terminus…) : plus aucun train, non desservi.
+  for (const i of bouts) if (!gris.has(i) && toutCoupe(i)) gris.set(i, "");
+  // Bout resté relié à un ou deux arrêts seulement (ex. Dourdan et Dourdan la Forêt, au-delà) : îlot sans trains.
+  for (const i of bouts) {
+    if (gris.has(i)) continue;
+    const ilot = new Set([i]);
+    const file = [i];
+    while (file.length && ilot.size <= 2) {
+      const k = file.shift();
+      for (const n of voisins[k]) if (!ilot.has(n) && !gris.has(n) && !coupees.has(cleArete(k, n))) { ilot.add(n); file.push(n); }
+    }
+    if (ilot.size <= 2) for (const k of ilot) { gris.set(k, ""); for (const n of voisins[k]) coupees.add(cleArete(k, n)); }
+  }
   const coupe = (m) => {
     if (m.via?.length) return m.via.every((i) => gris.has(i)); // raccourci : coupé si les gares qu'il longe le sont
     return m.a >= 0 && m.b >= 0 ? coupees.has(cleArete(m.a, m.b)) : m.a >= 0 ? toutCoupe(m.a) : m.b >= 0 && toutCoupe(m.b);

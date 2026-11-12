@@ -23,9 +23,10 @@ const etat = (messages) => C.etatReseau(arrets, traces, C.interruptions(messages
 const noms = (r) => [...r.gris.keys()].map((i) => arrets[i].nom).sort();
 const coupees = (r) => [...r.coupees].map((k) => k.split("|").map((i) => arrets[i].nom.slice(-1)).join("")).sort();
 
-// 1. Tronçon coupé A → E : tout l'entre-deux grisé (C aussi, malgré le direct B–D), pas la branche F.
+// 1. Tronçon coupé A → E : tout l'entre-deux grisé (C aussi, malgré le direct B–D), les terminus A et E aussi
+//    (plus aucun train), pas la branche F.
 let r = etat([{ niveau: "interrompu", portee: "troncon", coupures: [{ de: bout("A"), vers: bout("E") }] }]);
-assert.deepStrictEqual(noms(r), ["Gare B", "Gare C", "Gare D"]);
+assert.deepStrictEqual(noms(r), ["Gare A", "Gare B", "Gare C", "Gare D", "Gare E"]);
 assert.ok(!coupees(r).includes("CF"), "la branche n'est pas coupée");
 // 2. Gares sautées (trains passants) B → D : seule C est sautée ; le sens est gardé.
 r = etat([{ niveau: "perturbe", portee: "arrets", sauts: [{ de: bout("B"), vers: bout("D"), direction: "Gare E" }] }]);
@@ -41,7 +42,14 @@ assert.deepStrictEqual(coupees(r), ["CF"]);
 // 4. Un tronçon perturbé (pas interrompu) ne coupe rien.
 r = etat([{ niveau: "perturbe", portee: "troncon", coupures: [{ de: bout("A"), vers: bout("E") }] }]);
 assert.deepStrictEqual(noms(r), []);
-// 5. Rien au-delà des bouts : B → D ne grise ni A ni E.
+// 5. Terminus au bout d'un tronçon coupé : plus aucun train, grisé ; l'autre bout (voies ouvertes) reste desservi.
+r = etat([{ niveau: "interrompu", portee: "troncon", coupures: [{ de: bout("A"), vers: bout("C") }] }]);
+assert.deepStrictEqual(noms(r), ["Gare A", "Gare B"]);
+// 6. B → D : C grisé ; B et D ne restent reliés qu'à un terminus (A, E) : îlots sans trains, grisés aussi.
 r = etat([{ niveau: "interrompu", portee: "troncon", coupures: [{ de: bout("B"), vers: bout("D") }] }]);
-assert.deepStrictEqual(noms(r), ["Gare C"]);
+assert.deepStrictEqual(noms(r), ["Gare A", "Gare B", "Gare C", "Gare D", "Gare E"]);
+// 7. Rien au-delà des bouts quand le reste du réseau roule : C → D laisse A, B (3 arrêts avec C… non : A, B reliés à F
+//    par C, coupé) — on vérifie seulement que la branche F, hors tronçon, n'est pas grisée.
+r = etat([{ niveau: "interrompu", portee: "troncon", coupures: [{ de: bout("D"), vers: bout("E") }] }]);
+assert.ok(!noms(r).includes("Gare F") && !noms(r).includes("Gare A") && !noms(r).includes("Gare C"));
 console.log("ok");
