@@ -88,3 +88,17 @@ async def test_trajet_a_etapes_en_retard(hass: HomeAssistant):
     await hass.async_block_till_done()
     assert appels[0].data["title"] == "⛔ Travail : en retard — École 22 h 05 (+5 min)"
     assert appels[0].data["message"].startswith("Au mieux, en partant à 21 h 46 : École 22 h 05 (+5 min).\nDépart 21 h 46")
+
+
+async def test_rappel_dix_minutes_avant(hass: HomeAssistant):
+    hass.states.async_set("person.alex", "home", {"device_trackers": []})
+    hass.states.async_set("binary_sensor.workday_sensor", "on")
+    appels = async_mock_service(hass, "persistent_notification", "create")
+    config = await hass.async_add_executor_job(yaml_util.load_yaml, AUTO)
+    assert await async_setup_component(hass, "automation", {"automation": [config]})
+    hass.bus.async_fire("transports_idf_alerte", {**DONNEES, "type": "rappel_depart", "type_heure": "arrivee", "heure": "09:00:00",
+        "depart_habituel": "08:20:00", "nouvelles": [], "perturbations": [],
+        "conseil": {"depart_h": "8 h 20", "resume": "Bus 192 → RER B", "texte": "Départ 8 h 20\n🚶 5 min jusqu'à Les Blagis"}})
+    await hass.async_block_till_done()
+    assert appels[0].data["title"] == "🚶 Travail : pars à 8 h 20"
+    assert appels[0].data["message"].startswith("Bus 192 → RER B\nDépart 8 h 20")

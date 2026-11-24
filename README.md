@@ -9,7 +9,7 @@ Version actuelle : **1.1.0b7** (pré-version de test ; version stable : 1.0.0) (
 
 - **Arrêts** : prochains passages en temps réel (SIRI Lite), capteur « prochain départ atteignable » selon le temps de marche et une marge.
 - **Trajets** : itinéraire habituel, capteur binaire « perturbation » sur les lignes empruntées.
-- Événement `transports_idf_alerte` pour bâtir ses propres alertes de trajet (automatisation d'exemple dans `examples/`).
+- Événement `transports_idf_alerte` pour bâtir ses propres alertes de trajet (automatisation d'exemple dans `examples/`) : perturbation, retour à la normale, départ à avancer ou retard, et rappel « pars à … » 10 min avant le départ conseillé.
 - Service **Partir maintenant** : itinéraires d'un trajet au départ de maintenant, marche comprise.
 - **Réglages** : zone de départ, marge « en se pressant », rafraîchissement jour / nuit.
 - **Lignes d'intérêt** : sous-entrées « Ligne », suivies dans l'info trafic.

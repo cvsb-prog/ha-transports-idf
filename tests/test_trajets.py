@@ -77,7 +77,7 @@ async def test_direct_nominal_et_alertes(hass: HomeAssistant, aioclient_mock, fr
     # Nominal : préféré pour la prochaine occurrence (aujourd'hui)
     assert a["nominal"]["jour"] == (m + timedelta(minutes=30)).date().isoformat() and a["nominal"]["resume"].startswith("Bus 192")
     # Alerte, avec en rechange l'itinéraire qui évite la ligne interrompue
-    assert [ev.data["type"] for ev in evenements] == ["perturbation"]
+    assert [ev.data["type"] for ev in evenements if ev.data["type"] != "rappel_depart"] == ["perturbation"]
     assert evenements[0].data["rechange"]["resume"].startswith("Tramway T6")
     # Calcul à la demande (dépliage dans la carte) : réponse immédiate, pas de nouvel appel dans la minute
     appels = len(aioclient_mock.mock_calls)
@@ -88,7 +88,7 @@ async def test_direct_nominal_et_alertes(hass: HomeAssistant, aioclient_mock, fr
     mocks(aioclient_mock, itin(m, 10, 42, 12, 50), perturbe=False)
     await e.runtime_data.trafic.async_refresh()
     await hass.async_block_till_done()
-    assert [ev.data["type"] for ev in evenements] == ["perturbation", "retour_normal"]
+    assert [ev.data["type"] for ev in evenements if ev.data["type"] != "rappel_depart"] == ["perturbation", "retour_normal"]
 
 
 async def test_rappel_arrivee(hass: HomeAssistant, aioclient_mock, freezer):
@@ -106,21 +106,24 @@ async def test_rappel_arrivee(hass: HomeAssistant, aioclient_mock, freezer):
     r = capteur(hass).attributes["rappel"]
     # Le plus tardif qui arrive avant l'heure cible : le tram de +15 min → 5 min plus tôt que d'habitude
     assert r["resume"].startswith("Tramway T6") and r["avance"] == 5 and r["retard"] is False and r["depart_iso"]
-    assert [ev.data["type"] for ev in evenements] == ["depart_anticipe"]
+    assert [ev.data["type"] for ev in evenements if ev.data["type"] != "rappel_depart"] == ["depart_anticipe"]
     await e.runtime_data.trafic.async_refresh()
-    assert len(evenements) == 1
+    assert len([ev for ev in evenements if ev.data["type"] != "rappel_depart"]) == 1
     # Ça se dégrade : le tram arrive trop tard, reste le bus de +6 min → 14 min plus tôt → nouvelle alerte
     aioclient_mock.clear_requests()
     mocks(aioclient_mock, itin(m, 6, 42, 11, 58))
     await e.runtime_data.trafic.async_refresh()
-    assert [ev.data["type"] for ev in evenements] == ["depart_anticipe", "depart_anticipe"]
+    assert [ev.data["type"] for ev in evenements if ev.data["type"] != "rappel_depart"] == ["depart_anticipe", "depart_anticipe"]
     assert evenements[1].data["conseil"]["avance"] == 14
     # Le bus conseillé (+6 min) est parti ; le tram suivant arriverait trop tard. Home Assistant ne sait pas si la
     # personne est partie : le rappel reste sur le bus, pas de « retard » ni de nouvelle alerte.
     freezer.move_to("2026-11-06 06:09:00+00:00")
     await e.runtime_data.trafic.async_refresh()
     r = capteur(hass).attributes["rappel"]
-    assert r["retard"] is False and r["avance"] == 14 and len(evenements) == 2
+    assert r["retard"] is False and r["avance"] == 14 and len([ev for ev in evenements if ev.data["type"] != "rappel_depart"]) == 2
+    # « Pars dans 10 min » : parti une seule fois, dès que le départ conseillé (bus de 7 h 06) a été à moins de 10 min.
+    rappels = [ev.data for ev in evenements if ev.data["type"] == "rappel_depart"]
+    assert len(rappels) == 1 and rappels[0]["conseil"]["depart_h"] == "7 h 06"
 
 
 async def test_detour(hass: HomeAssistant, aioclient_mock, freezer):

@@ -40,6 +40,7 @@ from .api import (
 from .const import (
     DOMAIN,
     ECART_MINUTES,
+    RAPPEL_MINUTES,
     EFFETS_BLOQUANTS,
     EVENEMENT_ALERTE,
     JOUR_FERIE,
@@ -206,6 +207,7 @@ class EtatTrajet:
     rechange: dict[str, Any] | None = None
     notifiees: set[str] = field(default_factory=set)
     depart_notifie: datetime | None = None
+    rappel_envoye: datetime | None = None  # départ pour lequel « pars dans 10 min » est parti
 
 
 class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
@@ -765,6 +767,7 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         if not etat.en_veille:
             etat.notifiees = set()
             etat.depart_notifie = None
+            etat.rappel_envoye = None
             return
         ids = {p["id"] for p in etat.perturbations}
         nouvelles = ids - etat.notifiees
@@ -779,6 +782,12 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
             if etat.depart_notifie is None or (dep and etat.depart_notifie != datetime.min and dep <= etat.depart_notifie - timedelta(minutes=ECART_MINUTES)):
                 etat.depart_notifie = dep
                 self._envoyer(t, etat, "depart_anticipe", set())
+        # « Pars dans 10 min » : une fois par veille, de 10 min avant le départ conseillé jusqu'à l'heure du départ.
+        dep = date_navitia(r.get("depart")) if r and not r.get("impossible") else None
+        maintenant = dt_util.now().replace(tzinfo=None)
+        if dep and etat.rappel_envoye is None and dep - timedelta(minutes=RAPPEL_MINUTES) <= maintenant <= dep + timedelta(minutes=1):
+            etat.rappel_envoye = dep
+            self._envoyer(t, etat, "rappel_depart", set())
 
     def _envoyer(self, t, etat: EtatTrajet, type_: str, nouvelles: set[str]) -> None:
         r = etat.rappel or {}
