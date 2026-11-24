@@ -287,12 +287,12 @@ async def test_rappel_pas_en_retard_si_un_depart_arrive_a_l_heure(hass: HomeAssi
     assert etat.rappel["depart"] == "20261106T081200" and not etat.rappel["retard"]
     # Aucun départ à venir n'arrive à l'heure, et rien n'avait été conseillé : en retard, arrivée au plus tôt.
     etat.direct = [option("0805", "0912")]
-    etat.rappel = None
     await coord._rappel(t, etat, maintenant)
     assert etat.rappel["retard"] and etat.rappel["arrivee"] == "20261106T091200" and etat.rappel["retard_min"] == 12
-    # Le départ conseillé (7 h 50) est passé : Home Assistant ne sait pas si la personne est partie, le rappel reste
-    # sur lui, sans « retard » (1.1 : plus d'alerte à tort après l'heure du départ).
-    etat.rappel = {**option("0750", "0825"), "retard": False}
+    # Sans conseil antérieur (démarrage de Home Assistant après l'heure) : le départ de 7 h 50, à l'heure, est supposé
+    # respecté.
+    etat.rappel = None
+    etat.direct = [option("0805", "0912")]
     await coord._rappel(t, etat, maintenant)
     assert etat.rappel["depart"] == "20261106T075000" and not etat.rappel["retard"]
 
@@ -543,3 +543,4 @@ def test_debut_des_travaux_du_soir_selon_le_texte():
     assert avancer_periodes(periodes, "Le trafic est interrompu entre Gare A et Gare B.") == periodes  # rien à lire
     jour = [["20261112T090000", "20261112T170000"]]
     assert avancer_periodes(jour, texte) == jour  # période de jour : inchangée
+

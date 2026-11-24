@@ -297,7 +297,7 @@ async def test_trajet_a_etapes(hass: HomeAssistant, aioclient_mock, freezer):
         await trafic.async_refresh()
         await hass.async_block_till_done()
         assert trafic.last_update_success and capteur(hass).state != "unavailable"
-    assert not [x for x in evts if x["type"] == "depart_anticipe"]
+    assert not evts
 
     # Trajet tenable (bureau avant 9 h 20), après l'heure de départ planifiée (8 h 14), encore en veille :
     # Home Assistant ne sait pas si la personne est partie → pas de « retard », pas d'alerte.
@@ -307,12 +307,85 @@ async def test_trajet_a_etapes(hass: HomeAssistant, aioclient_mock, freezer):
     hass.config_entries.async_update_subentry(e, sous, data={**sous.data, "points": pts})
     await hass.async_block_till_done()
     evts.clear()
-    hass.bus.async_listen("transports_idf_alerte", lambda ev: evts.append(ev.data))
     trafic = e.runtime_data.trafic
-    for minute in (16, 20):
-        freezer.move_to(f"2026-11-06 07:{minute}:00+00:00")  # 8 h 16, 8 h 20
+    for minute in (5, 16, 20):
+        freezer.move_to(f"2026-11-06 07:{minute:02d}:00+00:00")  # 8 h 05 (« pars à 8 h 14 »), 8 h 16, 8 h 20
         await trafic.async_refresh()
         await hass.async_block_till_done()
     r = capteur(hass).attributes["rappel"]
     assert r["retard"] is False and r["depart_h"] == "8 h 14" and capteur(hass).attributes["possible"] is True
-    assert not [x for x in evts if x["type"] == "depart_anticipe"]
+    assert [x["type"] for x in evts] == ["rappel_depart"]
+
+
+async def test_film_d_une_matinee(hass: HomeAssistant, aioclient_mock, freezer):
+    """Trajet « arriver avant 9 h », bus toutes les 10 min, 32 min de trajet. Minute par minute :
+    7 h 30 rien ; 7 h 56 une perturbation rallonge le trajet de 30 min, le départ nécessaire (7 h 50) est passé →
+    perturbation, retard (pars à 8 h 00, arrivée 9 h 02) et « pars à » ; ensuite départ supposé respecté ;
+    8 h 04 la perturbation s'aggrave (+40) → nouvelle prévision 9 h 12 ; 8 h 20 fin de perturbation → retour à la
+    normale, arrivée 8 h 32 ; 9 h 30 fin de la veille, plus rien."""
+    from datetime import datetime
+
+    from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
+
+    await hass.config.async_set_time_zone("Europe/Paris")
+    freezer.move_to("2026-11-06 06:30:00+00:00")  # vendredi 7 h 30
+    hass.states.async_set("zone.home", "0", {"latitude": 48.7800, "longitude": 2.3170})
+    monde = {"allonge": 0}
+
+    async def journeys(method, url, data):
+        quand = datetime.strptime(url.query["datetime"], "%Y%m%dT%H%M%S")
+        duree = timedelta(minutes=32 + monde["allonge"])
+        if url.query.get("datetime_represents") == "arrival":
+            t = quand - duree
+            dep = t.replace(minute=t.minute // 10 * 10, second=0)
+        else:
+            dep = quand.replace(second=0) + timedelta(minutes=(-quand.minute) % 10)
+        j = copy.deepcopy(E.ITINERAIRES)
+        j["journeys"] = j["journeys"][:1]
+        j["journeys"][0]["departure_date_time"] = dep.strftime("%Y%m%dT%H%M%S")
+        j["journeys"][0]["arrival_date_time"] = (dep + duree).strftime("%Y%m%dT%H%M%S")
+        return AiohttpClientMockResponse("get", url, json=j)
+
+    async def rapports(method, url, data):
+        p = E.perturbation("MODIFIED_SERVICE")
+        p["disruptions"][0]["severity"]["name"] = "perturbée"  # ralentissements : la ligne reste empruntable
+        p["disruptions"][0]["messages"][0]["text"] = "RER B : trafic ralenti"
+        p["disruptions"][0]["messages"][1]["text"] = "Trafic ralenti entre Bourg-la-Reine et Denfert-Rochereau."
+        return AiohttpClientMockResponse("get", url, json=p if monde["allonge"] else {"disruptions": []})
+
+    reseau(aioclient_mock)
+    aioclient_mock.get(re.compile(r"/line_reports/lines/line(%3A|:)IDFM(%3A|:)C01743/"), side_effect=rapports)
+    aioclient_mock.get(re.compile(r"/line_reports/lines/"), json={"disruptions": []})
+    aioclient_mock.get(re.compile(r"/v2/navitia/journeys"), side_effect=journeys)
+    aioclient_mock.get(re.compile(r"/stop-monitoring"), json=E.siri(dt_util.utcnow(), []))
+    e = entree(hass, type_heure="arrivee", heure_depart="09:00:00", depart_habituel="08:20:00", duree=1920)
+    evts = async_capture_events(hass, EVENEMENT_ALERTE)
+    assert await hass.config_entries.async_setup(e.entry_id)
+    await hass.async_block_till_done()
+    trafic = e.runtime_data.trafic
+
+    async def a(heure, allonge=None):
+        if allonge is not None:
+            monde["allonge"] = allonge
+        h, m = heure
+        freezer.move_to(f"2026-11-06 {h - 1:02d}:{m:02d}:00+00:00")
+        await trafic.async_refresh()
+        await hass.async_block_till_done()
+        nouveaux = [ev.data for ev in evts]
+        evts.clear()
+        return nouveaux
+
+    assert capteur(hass).attributes["rappel"]["depart_h"] == "8 h 20" and not evts  # 7 h 30 : rien
+    assert await a((7, 40)) == []
+    e1 = await a((7, 56), allonge=30)
+    assert [x["type"] for x in e1] == ["perturbation", "depart_anticipe", "rappel_depart"]
+    assert e1[1]["conseil"]["depart_h"] == "8 h 00" and e1[1]["ecarts"] == ["arrivée 9 h 02 (+2 min)"]
+    assert await a((7, 58)) == []  # départ supposé respecté, rien de neuf
+    assert await a((8, 0)) == []
+    e2 = await a((8, 4), allonge=40)
+    assert [x["type"] for x in e2] == ["prevision"] and e2[0]["ecarts"] == ["arrivée 9 h 12 (+12 min)"] and e2[0]["en_route"]
+    assert await a((8, 6)) == []
+    e3 = await a((8, 20), allonge=0)
+    assert [x["type"] for x in e3] == ["retour_normal"] and e3[0]["arrivee_prevue"] == "8 h 32" and e3[0]["ecarts"] == []
+    assert await a((8, 40)) == [] and await a((9, 0)) == []
+    assert await a((9, 30)) == [] and capteur(hass).attributes["en_veille"] is False

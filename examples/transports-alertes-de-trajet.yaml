@@ -3,8 +3,8 @@ description: >-
   Les jours travaillés, prévient la personne d'un trajet (sur ses téléphones
   uniquement) pendant la veille du trajet : ligne de l'itinéraire perturbée
   (correspondances comprises), retour à la normale, départ à avancer pour
-  arriver à l'heure (ou retard à une étape), et « pars à … » 10 min avant le
-  départ conseillé. L'intégration Transports IDF envoie l'événement ; tout le reste est ici.
+  arriver à l'heure (ou retard à une étape), « pars à … » 10 min avant le
+  départ conseillé, puis, en route, chaque nouvelle prévision d'arrivée. L'intégration Transports IDF envoie l'événement ; tout le reste est ici.
 mode: queued
 triggers:
   - trigger: event
@@ -34,6 +34,7 @@ actions:
         {% if d.type == 'perturbation' %}⚠️ {{ d.trajet }} ({{ repere }}) : perturbation
         {%- elif d.type == 'retour_normal' %}✅ {{ d.trajet }} ({{ repere }}) : trafic normal
         {%- elif d.type == 'rappel_depart' %}🚶 {{ d.trajet }} : pars à {{ c.depart_h }}
+        {%- elif d.type == 'prevision' %}🔄 {{ d.trajet }} ({{ repere }}) : nouvelle prévision
         {%- elif c.impossible and d.ecarts %}⛔ {{ d.trajet }} : en retard — {{ d.ecarts | join(', ') }}
         {%- elif c.impossible %}⛔ {{ d.trajet }} : arrivée à {{ heure }} impossible
         {%- else %}⏰ {{ d.trajet }} : pars à {{ c.depart_h }} au plus tard{% endif %}
@@ -45,7 +46,7 @@ actions:
         {%- if d.perturbations | count > d.nouvelles | count %}
         ({{ d.perturbations | count }} perturbations en cours sur le trajet)
         {%- endif %}
-        {%- if c.depart_h and not c.impossible %}
+        {%- if c.depart_h and not c.impossible and not d.en_route %}
         Pour arriver à {{ heure }} : pars à {{ c.depart_h }} au plus tard ({{ c.resume }}).
         {%- elif d.rechange and d.rechange.texte %}
         Itinéraire de rechange ({{ d.rechange.resume }}) :
@@ -58,6 +59,10 @@ actions:
         {%- elif d.type == 'rappel_depart' %}
         {{ c.resume }}
         {{ c.texte }}
+        {%- elif d.type == 'prevision' and c.impossible %}
+        Aucun itinéraire ne permet plus d'aller au bout du trajet.
+        {%- elif d.type == 'prevision' %}
+        {{ c.resume }}
         {%- elif c.impossible and d.ecarts %}
         Au mieux, en partant à {{ c.depart_h }} : {{ d.ecarts | join(', ') }}.
         {{ c.texte }}

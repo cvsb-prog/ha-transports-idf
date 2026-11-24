@@ -51,6 +51,7 @@ from .const import (
     T_DEST_ID,
     T_DET_DUREE,
     T_DET_HEURE,
+    T_DUREE,
     T_DET_ID,
     T_DET_JOURS,
     T_DET_MODE,
@@ -208,6 +209,11 @@ class EtatTrajet:
     notifiees: set[str] = field(default_factory=set)
     depart_notifie: datetime | None = None
     rappel_envoye: datetime | None = None  # départ pour lequel « pars dans 10 min » est parti
+    # Départ supposé respecté (« pars à » envoyé, ou heure passée) : la suite est calculée à partir de lui.
+    fige: dict[str, Any] | None = None
+    ids_fige: frozenset[str] | None = None  # perturbations au dernier calcul « en route »
+    fige_le: datetime | None = None  # heure du dernier calcul « en route »
+    prevision_notifiee: tuple | None = None  # dernière prévision envoyée (départ, arrivée, écarts)
 
 
 class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
@@ -227,15 +233,16 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
 
     # ---- Calendrier ---------------------------------------------------------
     @staticmethod
-    def fenetre(heure: str, avance: int, maintenant: datetime, jours: set[int] | None = None, exclus: set[date] | frozenset = frozenset()) -> bool:
-        """Vrai si maintenant est dans [départ − avance ; départ + 10 min] (heure locale), un jour du trajet (hors jours exclus)."""
+    def fenetre(heure: str, avance: int, maintenant: datetime, jours: set[int] | None = None, exclus: set[date] | frozenset = frozenset(),
+                apres: timedelta = APRES_DEPART) -> bool:
+        """Vrai si maintenant est dans [départ − avance ; départ + apres] (heure locale), un jour du trajet (hors jours exclus)."""
         base = maintenant.replace(hour=0, minute=0, second=0, microsecond=0)
         h = _heure(heure)
         for decalage in (-1, 0, 1):
             d = base + timedelta(days=decalage, hours=h.hour, minutes=h.minute)
             if (jours is not None and d.weekday() not in jours) or d.date() in exclus:
                 continue
-            if d - timedelta(minutes=avance) <= maintenant <= d + APRES_DEPART:
+            if d - timedelta(minutes=avance) <= maintenant <= d + apres:
                 return True
         return False
 
@@ -567,13 +574,16 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         for t in trajets:
             etat = self.etats.setdefault(t.subentry_id, EtatTrajet())
             exclus = set() if aussi_feries(t.data) else self.feries
-            etat.en_veille = self.fenetre(heure_depart_maison(t.data), VEILLE_MINUTES, maintenant, jours_trajet(t.data), exclus)
+            etat.en_veille = self.fenetre(heure_depart_maison(t.data), VEILLE_MINUTES, maintenant, jours_trajet(t.data), exclus, self._apres_depart(t, etat))
             self._perturbations(t, etat, par_ligne, ignorer_info, maintenant)
             une_veille |= etat.en_veille
             await self._nominal(t, etat, maintenant)
             if etat.en_veille:
                 await self._direct(t, etat, maintenant)
-                await self._rappel(t, etat, maintenant)
+                if etat.fige:
+                    await self._en_route(t, etat)
+                else:
+                    await self._rappel(t, etat, maintenant)
             else:
                 etat.rappel = None
                 if etat.direct_le and maintenant - etat.direct_le > DUREE_DIRECT:
@@ -678,15 +688,14 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         if d.get("points") and besoin_planning(d["points"]):
             await self._rappel_etapes(t, etat, jour, maintenant)
             return
-        if self._rappel_passe(etat, jour, maintenant):
-            return
         plans = await self._plans(t, jour, None, None, etat.bloquees, 3)
         cible = datetime.combine(jour, _heure(d[T_HEURE]))
         if d.get(T_TYPE_HEURE) == "arrivee":
             # Départs calculés pour l'heure d'arrivée, et ceux au départ de maintenant (un départ plus tardif peut
-            # encore arriver à l'heure). Seuls ceux à venir sont proposés : on ne conseille pas un départ déjà passé.
+            # encore arriver à l'heure). Seuls ceux à venir sont proposés : on ne conseille pas un départ déjà passé…
+            # sauf sans conseil antérieur (démarrage de Home Assistant après l'heure) : départ supposé respecté.
             candidats = plans + list(etat.direct) if jour == maintenant.date() else plans
-            if jour == maintenant.date():
+            if jour == maintenant.date() and etat.rappel is not None:
                 candidats = [o for o in candidats if _dep(o) and _dep(o) >= maintenant - timedelta(minutes=1)]
             a_l_heure = [o for o in candidats if _arr(o) and _arr(o) <= cible]
             if a_l_heure:
@@ -713,15 +722,52 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
             else 0,
             "retard": d.get(T_TYPE_HEURE) == "arrivee" and bool(_arr(meilleur) and _arr(meilleur) > cible),
             "retard_min": max(0, round((_arr(meilleur) - cible).total_seconds() / 60)) if d.get(T_TYPE_HEURE) == "arrivee" and _arr(meilleur) else 0,
+            "heure": d.get(T_HEURE),
             "habituel": _lignes(meilleur) == self._preferees(t),
         }
 
-    @staticmethod
-    def _rappel_passe(etat: EtatTrajet, jour: date, maintenant: datetime) -> bool:
-        """Le départ conseillé est passé : on le garde tel quel (Home Assistant ne sait pas si la personne est partie)."""
-        r = etat.rappel
-        dep = date_navitia(r.get("depart")) if r and not r.get("impossible") else None
-        return bool(dep and dep.date() == jour and dep < maintenant - timedelta(minutes=1))
+    def _apres_depart(self, t, etat: EtatTrajet) -> timedelta:
+        """Fin de la veille après le départ habituel : jusqu'à l'arrivée prévue + 15 min (suivi en route)."""
+        d = t.data
+        duree = (etat.nominal or {}).get("duree") or d.get(T_DUREE) or 0
+        fin = timedelta(seconds=float(duree)) + timedelta(minutes=15)
+        f = etat.fige
+        if f and f.get("arrivee") and f.get("depart"):
+            habituel = datetime.combine(date_navitia(f["depart"]).date(), _heure(heure_depart_maison(d)))
+            fin = max(fin, date_navitia(f["arrivee"]) - habituel + timedelta(minutes=15))
+        return max(APRES_DEPART, fin)
+
+    async def _en_route(self, t, etat: EtatTrajet) -> None:
+        """Départ supposé respecté : prévision recalculée à partir de lui, quand les perturbations changent, et au plus
+        toutes les 6 min si une perturbation est en cours (elle peut s'aggraver ou se résorber)."""
+        ids = frozenset(p["id"] for p in etat.perturbations)
+        maintenant = dt_util.now().replace(tzinfo=None)
+        if ids == etat.ids_fige and not (ids and etat.fige_le and maintenant - etat.fige_le >= timedelta(minutes=6)):
+            return
+        etat.ids_fige, etat.fige_le = ids, maintenant
+        f = etat.fige
+        depart = date_navitia(f.get("depart"))
+        if depart is None:
+            return
+        jour = depart.date()
+        plans = await self._plans(t, jour, depart, None, etat.bloquees, 1)
+        meilleur = min(plans, key=lambda o: _arr(o) or datetime.max, default=None)
+        if meilleur is None:
+            etat.rappel = {**f, "en_route": True, "impossible": True}
+            return
+        await self._enrichir([meilleur], etat)
+        r = {**f, **meilleur, "depart": f["depart"], "depart_h": f.get("depart_h"), "depart_iso": f.get("depart_iso"), "en_route": True}
+        if not meilleur.get("points"):  # trajet simple : retard sur l'heure visée
+            cible = None
+            if f.get("type_heure") == "arrivee" and f.get("heure"):
+                cible = datetime.combine(jour, _heure(f["heure"]))
+            arr = _arr(meilleur)
+            r["retard"] = bool(cible and arr and arr > cible)
+            r["retard_min"] = max(0, round((arr - cible).total_seconds() / 60)) if cible and arr else 0
+        else:
+            r["retard"] = not meilleur.get("possible", True)
+        r["impossible"] = False
+        etat.rappel = r
 
     async def _rappel_etapes(self, t, etat: EtatTrajet, jour: date, maintenant: datetime) -> None:
         """Trajet à étapes : le départ planifié (comme le rappel des autres trajets).
@@ -731,12 +777,13 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         trajet plus long que prévu), on repart de maintenant : retards et écarts, une alerte.
         """
         d = t.data
-        if self._rappel_passe(etat, jour, maintenant):
-            return
         plans = await self._plans(t, jour, None, None, etat.bloquees, 1)
         meilleur = plans[0] if plans else None
-        if jour == maintenant.date() and (meilleur is None or (_dep(meilleur) and _dep(meilleur) < maintenant - timedelta(minutes=1))):
-            # Le plan voudrait un départ déjà passé (perturbation, trajet plus long que prévu) : au mieux, maintenant.
+        passe = meilleur is not None and _dep(meilleur) and _dep(meilleur) < maintenant - timedelta(minutes=1)
+        if jour == maintenant.date() and (meilleur is None or (passe and etat.rappel is not None)):
+            # Le plan voudrait un départ déjà passé alors qu'on conseillait un départ à venir (perturbation, trajet
+            # plus long que prévu) : au mieux, maintenant. Sans conseil antérieur (démarrage de Home Assistant après
+            # l'heure), le départ planifié est supposé respecté.
             maintenant_plans = await self._plans(t, jour, maintenant, None, etat.bloquees, 1)
             meilleur = maintenant_plans[0] if maintenant_plans else None
         pts = points_du_jour(points_du_trajet(d), jour)
@@ -780,31 +827,61 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         return {"le": dt_util.utcnow().isoformat(), "itineraires": etat.direct}
 
     # ---- Alertes -------------------------------------------------------------
+    @staticmethod
+    def _prevision(r: dict[str, Any] | None) -> tuple:
+        """Ce qu'une alerte annonce : départ, arrivée, écarts. Une autre valeur = une nouvelle prévision."""
+        if not r:
+            return ()
+        if r.get("impossible"):
+            return ("impossible",)
+        ecarts = tuple((p.get("nom"), p.get("retard")) for p in r.get("points") or [] if p.get("retard"))
+        return (r.get("depart_h"), r.get("arrivee_h"), r.get("retard_min") or 0, ecarts)
+
     def _alerter(self, t, etat: EtatTrajet) -> None:
+        """Avant le départ conseillé : départ à avancer, retard (départ qui serait déjà passé), « pars à » 10 min avant.
+        Une fois le « pars à » envoyé (ou l'heure passée), le départ est supposé respecté (figé) : la suite se calcule
+        à partir de lui. Toute alerte porte la prévision ; dès qu'une alerte est partie, chaque changement de
+        prévision en envoie une nouvelle.
+        """
         if not etat.en_veille:
             etat.notifiees = set()
             etat.depart_notifie = None
             etat.rappel_envoye = None
+            etat.fige = etat.ids_fige = etat.prevision_notifiee = etat.fige_le = None
             return
         ids = {p["id"] for p in etat.perturbations}
+        r = etat.rappel
+        maintenant = dt_util.now().replace(tzinfo=None)
+        dep = date_navitia(r.get("depart")) if r and not r.get("impossible") else None
+        envoyees = []
         nouvelles = ids - etat.notifiees
         type_ = "perturbation" if nouvelles else "retour_normal" if not ids and etat.notifiees else None
         etat.notifiees = ids
         if type_:
-            self._envoyer(t, etat, type_, nouvelles)
-        r = etat.rappel
-        if r and (r.get("impossible") or r.get("retard") or (r.get("avance") or 0) >= ECART_MINUTES):
-            dep = datetime.min if (r.get("impossible") or r.get("retard")) else date_navitia(r.get("depart"))
-            # Déjà prévenu d'un retard (datetime.min) : on ne renvoie pas (et datetime.min − 3 min déborderait).
-            if etat.depart_notifie is None or (dep and etat.depart_notifie != datetime.min and dep <= etat.depart_notifie - timedelta(minutes=ECART_MINUTES)):
-                etat.depart_notifie = dep
-                self._envoyer(t, etat, "depart_anticipe", set())
-        # « Pars dans 10 min » : une fois par veille, de 10 min avant le départ conseillé jusqu'à l'heure du départ.
-        dep = date_navitia(r.get("depart")) if r and not r.get("impossible") else None
-        maintenant = dt_util.now().replace(tzinfo=None)
-        if dep and etat.rappel_envoye is None and dep - timedelta(minutes=RAPPEL_MINUTES) <= maintenant <= dep + timedelta(minutes=1):
-            etat.rappel_envoye = dep
-            self._envoyer(t, etat, "rappel_depart", set())
+            envoyees.append((type_, nouvelles))
+        if not etat.fige and r:
+            if r.get("impossible") or r.get("retard") or (r.get("avance") or 0) >= ECART_MINUTES:
+                d_ = datetime.min if (r.get("impossible") or r.get("retard")) else dep
+                # Déjà prévenu d'un retard (datetime.min) : on ne renvoie pas (et datetime.min − 3 min déborderait).
+                if etat.depart_notifie is None or (d_ and etat.depart_notifie != datetime.min and d_ <= etat.depart_notifie - timedelta(minutes=ECART_MINUTES)):
+                    etat.depart_notifie = d_
+                    envoyees.append(("depart_anticipe", set()))
+            # « Pars à … » : une fois, de 10 min avant le départ conseillé jusqu'à l'heure du départ ; ensuite le départ
+            # est supposé respecté.
+            if dep and etat.rappel_envoye is None and dep - timedelta(minutes=RAPPEL_MINUTES) <= maintenant:
+                etat.rappel_envoye = dep
+                if maintenant <= dep + timedelta(minutes=1):
+                    envoyees.append(("rappel_depart", set()))
+                etat.fige = {**r}
+        prevision = self._prevision(r)
+        if not envoyees and etat.prevision_notifiee is not None and prevision != etat.prevision_notifiee:
+            envoyees.append(("prevision", set()))
+        for type_, nouv in envoyees:
+            self._envoyer(t, etat, type_, nouv)
+        if envoyees and any(x[0] != "rappel_depart" for x in envoyees):
+            etat.prevision_notifiee = prevision
+        elif envoyees and etat.prevision_notifiee is not None:
+            etat.prevision_notifiee = prevision
 
     def _envoyer(self, t, etat: EtatTrajet, type_: str, nouvelles: set[str]) -> None:
         r = etat.rappel or {}
@@ -821,6 +898,7 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
                 "ecarts": [f"{p['nom']} {p.get('arrivee_h') or p.get('depart_h')} (+{p['retard']} min)" for p in r.get("points") or [] if p.get("retard")]
                 or ([f"arrivée {r.get('arrivee_h')} (+{r['retard_min']} min)"] if r.get("retard_min") else []),
                 "arrivee_prevue": r.get("arrivee_h"),
+                "en_route": bool(r.get("en_route")),
                 "depart_habituel": heure_depart_maison(t.data),
                 "conseil": conseil,
                 "itineraire": t.data.get(T_RESUME),

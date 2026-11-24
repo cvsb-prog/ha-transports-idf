@@ -121,3 +121,27 @@ async def test_retard_ou_arrivee_prevue_dans_toutes_les_alertes(hass: HomeAssist
         "arrivee_prevue": "9 h 12", "ecarts": ["arrivée 9 h 12 (+12 min)"], "conseil": {"depart_h": "8 h 05", "impossible": True}})
     await hass.async_block_till_done()
     assert "\nRetard prévu : arrivée 9 h 12 (+12 min).\n" in appels[1].data["message"]
+
+
+async def test_en_route(hass: HomeAssistant):
+    """En route : pas de « pars à … », et chaque nouvelle prévision est annoncée."""
+    hass.states.async_set("person.alex", "home", {"device_trackers": []})
+    hass.states.async_set("binary_sensor.workday_sensor", "on")
+    appels = async_mock_service(hass, "persistent_notification", "create")
+    config = await hass.async_add_executor_job(yaml_util.load_yaml, AUTO)
+    assert await async_setup_component(hass, "automation", {"automation": [config]})
+    commun = {**DONNEES, "type_heure": "arrivee", "heure": "09:00:00", "depart_habituel": "08:20:00", "nouvelles": [], "perturbations": [], "en_route": True}
+    p = {"id": "p1", "titre": "RER B : trafic ralenti", "lignes_trajet": ["RER B"]}
+    hass.bus.async_fire("transports_idf_alerte", {**commun, "type": "perturbation", "nouvelles": [p], "perturbations": [p],
+        "arrivee_prevue": "9 h 12", "ecarts": ["arrivée 9 h 12 (+12 min)"],
+        "conseil": {"depart_h": "8 h 20", "resume": "Bus 192 → RER B", "en_route": True}})
+    hass.bus.async_fire("transports_idf_alerte", {**commun, "type": "prevision", "arrivee_prevue": "9 h 05", "ecarts": ["arrivée 9 h 05 (+5 min)"],
+        "conseil": {"depart_h": "8 h 20", "resume": "Bus 192 → RER B", "en_route": True}})
+    hass.bus.async_fire("transports_idf_alerte", {**commun, "type": "prevision", "ecarts": [],
+        "conseil": {"depart_h": "8 h 20", "en_route": True, "impossible": True}})
+    await hass.async_block_till_done()
+    assert "pars à" not in appels[0].data["message"]
+    assert "\nRetard prévu : arrivée 9 h 12 (+12 min).\n" in appels[0].data["message"]
+    assert appels[1].data["title"] == "🔄 Travail (arrivée 9 h 00) : nouvelle prévision"
+    assert appels[1].data["message"].startswith("Bus 192 → RER B\nRetard prévu : arrivée 9 h 05 (+5 min).\n")
+    assert appels[2].data["message"].startswith("Aucun itinéraire ne permet plus d'aller au bout du trajet.")
