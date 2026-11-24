@@ -8,6 +8,7 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 ### Corrigé
 
 - Trajet à étapes, départs « au départ de maintenant » (carte) : on garde les horaires du jour quand ils partent plus tard, au lieu de partir tout de suite pour attendre des heures à une étape (durée affichée de 21 h 46 la nuit).
+- Carte : l'écart avec l'itinéraire préféré est une différence d'heure d'arrivée ; il s'affiche « arrivée 7 min plus tard / plus tôt » au lieu de « 7 min plus long / plus rapide » (faux quand les départs diffèrent).
 
 ## [1.1.0b10] - 2026-11-24
 

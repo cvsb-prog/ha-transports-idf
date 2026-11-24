@@ -1055,7 +1055,7 @@ class TransportsIdfCard extends HTMLElement {
     };
     const ecartHtml = (g) => {
       if (g == null || g === 0) return "";
-      return `<span class="ecart${g > 0 ? " mieux" : ""}">${g > 0 ? `${g} min plus rapide` : `${-g} min plus long`}</span>`;
+      return `<span class="ecart${g > 0 ? " mieux" : ""}">${g > 0 ? `arrivée ${g} min plus tôt` : `arrivée ${-g} min plus tard`}</span>`;
     };
     if (direct.length) {
       direct.forEach((it, n) => {
