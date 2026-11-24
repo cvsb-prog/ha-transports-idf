@@ -9,6 +9,7 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 - Suivi du trajet après le rappel « pars à … » : le départ est alors supposé respecté et figé. En route, l'arrivée est recalculée depuis ce départ quand les perturbations changent (toutes les 6 min tant qu'une perturbation est en cours), et chaque nouvelle prévision est annoncée (nouveau type d'événement `prevision`, champ `en_route`).
 - La veille dure jusqu'à l'arrivée prévue + 15 min.
+- Trajet : les zones de Home Assistant (la maison comprise) sont proposées comme destination ou étape, après les lieux trouvés. Un trajet peut donc partir d'un lieu et arriver à la maison.
 
 ### Modifié
 
