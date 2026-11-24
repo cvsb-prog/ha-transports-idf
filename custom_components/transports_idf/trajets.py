@@ -711,13 +711,15 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         }
 
     async def _rappel_etapes(self, t, etat: EtatTrajet, jour: date, maintenant: datetime) -> None:
-        """Trajet à étapes : départ planifié ; s'il est déjà passé, au plus tôt à partir de maintenant (retards)."""
+        """Trajet à étapes : le départ planifié (comme le rappel des autres trajets).
+
+        On ne recalcule pas « au départ de maintenant » une fois l'heure passée : Home Assistant ne sait pas si la
+        personne est partie, et un trajet tenable passerait « en retard » deux minutes après chaque départ planifié.
+        Les départs possibles à partir de maintenant restent proposés dans la carte.
+        """
         d = t.data
         plans = await self._plans(t, jour, None, None, etat.bloquees, 1)
         meilleur = plans[0] if plans else None
-        if jour == maintenant.date() and (meilleur is None or (_dep(meilleur) and _dep(meilleur) < maintenant - timedelta(minutes=1))):
-            maintenant_plans = await self._plans(t, jour, maintenant, None, etat.bloquees, 1)
-            meilleur = maintenant_plans[0] if maintenant_plans else meilleur
         pts = points_du_jour(points_du_trajet(d), jour)
         _, haut, _, _ = bornes_point(pts, len(pts) - 1)
         cible = datetime.combine(jour, datetime.min.time()) + timedelta(minutes=haut) if haut < INF else None

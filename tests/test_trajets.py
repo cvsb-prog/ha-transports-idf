@@ -289,3 +289,21 @@ async def test_trajet_a_etapes(hass: HomeAssistant, aioclient_mock, freezer):
         await hass.async_block_till_done()
         assert trafic.last_update_success and capteur(hass).state != "unavailable"
     assert not [x for x in evts if x["type"] == "depart_anticipe"]
+
+    # Trajet tenable (bureau avant 9 h 20), après l'heure de départ planifiée (8 h 14), encore en veille :
+    # Home Assistant ne sait pas si la personne est partie → pas de « retard », pas d'alerte.
+    sous = e.subentries[sous_id]
+    pts = copy.deepcopy(pts)
+    pts[3]["arrivee"] = fenetre("avant", fin="09:20:00")
+    hass.config_entries.async_update_subentry(e, sous, data={**sous.data, "points": pts})
+    await hass.async_block_till_done()
+    evts.clear()
+    hass.bus.async_listen("transports_idf_alerte", lambda ev: evts.append(ev.data))
+    trafic = e.runtime_data.trafic
+    for minute in (16, 20):
+        freezer.move_to(f"2026-11-06 07:{minute}:00+00:00")  # 8 h 16, 8 h 20
+        await trafic.async_refresh()
+        await hass.async_block_till_done()
+    r = capteur(hass).attributes["rappel"]
+    assert r["retard"] is False and r["depart_h"] == "8 h 14" and capteur(hass).attributes["possible"] is True
+    assert not [x for x in evts if x["type"] == "depart_anticipe"]
