@@ -773,7 +773,8 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         r = etat.rappel
         if r and (r.get("impossible") or r.get("retard") or (r.get("avance") or 0) >= ECART_MINUTES):
             dep = datetime.min if (r.get("impossible") or r.get("retard")) else date_navitia(r.get("depart"))
-            if etat.depart_notifie is None or (dep and dep <= etat.depart_notifie - timedelta(minutes=ECART_MINUTES)):
+            # Déjà prévenu d'un retard (datetime.min) : on ne renvoie pas (et datetime.min − 3 min déborderait).
+            if etat.depart_notifie is None or (dep and etat.depart_notifie != datetime.min and dep <= etat.depart_notifie - timedelta(minutes=ECART_MINUTES)):
                 etat.depart_notifie = dep
                 self._envoyer(t, etat, "depart_anticipe", set())
 

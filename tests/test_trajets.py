@@ -280,3 +280,12 @@ async def test_trajet_a_etapes(hass: HomeAssistant, aioclient_mock, freezer):
     trafic._envoyer(e.subentries[sous_id], trafic.etats[sous_id], "depart_anticipe", set())
     await hass.async_block_till_done()
     assert (evts[0]["heure"], evts[0]["type_heure"], evts[0]["ecarts"]) == ("09:05:00", "arrivee", ["Bureau 9 h 14 (+9 min)"])
+    # Mises à jour suivantes, toujours en retard : pas de nouvelle alerte, et surtout pas d'erreur
+    # (le capteur devenait indisponible et le trajet disparaissait de la carte).
+    evts.clear()
+    for minute in (42, 44):
+        freezer.move_to(f"2026-11-06 06:{minute}:00+00:00")
+        await trafic.async_refresh()
+        await hass.async_block_till_done()
+        assert trafic.last_update_success and capteur(hass).state != "unavailable"
+    assert not [x for x in evts if x["type"] == "depart_anticipe"]
