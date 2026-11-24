@@ -88,6 +88,8 @@ MODES_DETOUR = {"marche": "walking", "velo": "bike", "voiture": "car"}
 
 # Écart à partir duquel on conseille de partir plus tôt / un autre itinéraire
 ECART_MINUTES = 3
+# Rappel « pars dans 10 min » : envoyé une fois, ce nombre de minutes avant le départ conseillé.
+RAPPEL_MINUTES = 10
 
 # Événement d'alerte, exploité par une automatisation
 EVENEMENT_ALERTE = f"{DOMAIN}_alerte"

@@ -2,8 +2,9 @@ alias: Transports – alertes de trajet
 description: >-
   Les jours travaillés, prévient la personne d'un trajet (sur ses téléphones
   uniquement) pendant la veille du trajet : ligne de l'itinéraire perturbée
-  (correspondances comprises), retour à la normale, et — pour un trajet à heure
-  d'arrivée cible — départ à avancer pour arriver à l'heure. L'intégration Transports IDF envoie l'événement ; tout le reste est ici.
+  (correspondances comprises), retour à la normale, départ à avancer pour
+  arriver à l'heure (ou retard à une étape), et « pars à … » 10 min avant le
+  départ conseillé. L'intégration Transports IDF envoie l'événement ; tout le reste est ici.
 mode: queued
 triggers:
   - trigger: event
@@ -32,6 +33,7 @@ actions:
       titre: >-
         {% if d.type == 'perturbation' %}⚠️ {{ d.trajet }} ({{ repere }}) : perturbation
         {%- elif d.type == 'retour_normal' %}✅ {{ d.trajet }} ({{ repere }}) : trafic normal
+        {%- elif d.type == 'rappel_depart' %}🚶 {{ d.trajet }} : pars à {{ c.depart_h }}
         {%- elif c.impossible and d.ecarts %}⛔ {{ d.trajet }} : en retard — {{ d.ecarts | join(', ') }}
         {%- elif c.impossible %}⛔ {{ d.trajet }} : arrivée à {{ heure }} impossible
         {%- else %}⏰ {{ d.trajet }} : pars à {{ c.depart_h }} au plus tard{% endif %}
@@ -53,6 +55,9 @@ actions:
         {%- endif %}
         {%- elif d.type == 'retour_normal' %}
         Plus aucune perturbation sur {{ d.itineraire }}.
+        {%- elif d.type == 'rappel_depart' %}
+        {{ c.resume }}{% if d.ecarts %} — en retard : {{ d.ecarts | join(', ') }}{% endif %}
+        {{ c.texte }}
         {%- elif c.impossible and d.ecarts %}
         Au mieux, en partant à {{ c.depart_h }} : {{ d.ecarts | join(', ') }}.
         {{ c.texte }}
