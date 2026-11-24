@@ -5,6 +5,10 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.1.0b10] - 2026-11-24
+
+Pré-version de test.
+
 ### Ajouté
 
 - Suivi du trajet après le rappel « pars à … » : le départ est alors supposé respecté et figé. En route, l'arrivée est recalculée depuis ce départ quand les perturbations changent (toutes les 6 min tant qu'une perturbation est en cours), et chaque nouvelle prévision est annoncée (nouveau type d'événement `prevision`, champ `en_route`).
