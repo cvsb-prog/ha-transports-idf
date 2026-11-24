@@ -5,6 +5,18 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.1.0b9] - 2026-11-24
+
+Pré-version de test.
+
+### Ajouté
+
+- Chaque alerte indique l'arrivée prévue, ou le retard prévu à la destination et aux étapes (événement : `arrivee_prevue`, `ecarts`).
+
+### Modifié
+
+- Le rappel ne conseille plus un départ déjà passé : si une perturbation demande de partir avant maintenant, il part de maintenant (retard prévu, une alerte) au lieu de conseiller un départ à avancer impossible. Un départ conseillé dont l'heure est passée reste figé.
+
 ## [1.1.0b8] - 2026-11-24
 
 Pré-version de test.
