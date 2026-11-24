@@ -5,6 +5,14 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.1.0b7] - 2026-11-24
+
+Pré-version de test.
+
+### Corrigé
+
+- Trajet à heure d'arrivée : une fois le départ conseillé passé, le rappel passait « en retard » (et l'alerte partait) s'il ne restait plus de départ à l'heure, alors que la personne était peut-être partie. Le rappel reste sur le départ conseillé.
+
 ## [1.1.0b6] - 2026-11-24
 
 Pré-version de test.
