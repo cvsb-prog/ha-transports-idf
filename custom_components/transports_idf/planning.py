@@ -137,6 +137,8 @@ def besoin_planning(points: list[dict[str, Any]]) -> bool:
     """Le trajet sort-il de l'ancien modèle (au plus une étape, heure d'arrivée ou de départ) ?"""
     if len(points) > 3:
         return True
+    if any(p.get("zone") and not p.get("id") for p in points[1:]):
+        return True  # étape ou destination dans une zone (trajet qui arrive à la maison…) : l'ancien calcul veut un lieu
     if (points[-1].get("arrivee") or {}).get("type") in (APRES, ENTRE):
         return True
     if (points[0].get("depart") or {}).get("type") in (AVANT, ENTRE):

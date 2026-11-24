@@ -591,7 +591,16 @@ class TrajetFlow(_Base):
         })
         return self.async_show_form(step_id="user", data_schema=self.add_suggested_values_to_schema(schema, user_input or {}), errors=erreurs)
 
-    def _options_depart(self) -> list[SelectOptionDict]:
+    def _options_zones(self) -> list[SelectOptionDict]:
+        """Zones de Home Assistant (la maison d'abord) : départ, étape ou destination (trajet retour…)."""
+        return [o for o in self._options_depart(sans_lieux=True)]
+
+    def _point_choisi(self, choix: str, lieux: list[dict[str, Any]], **reglages: Any) -> dict[str, Any]:
+        if choix.startswith("zone|"):
+            return point(self._nom_zone(choix[5:]), zone=choix[5:], **reglages)
+        return self._point_lieu(next(l for l in lieux if l["id"] == choix), **reglages)
+
+    def _options_depart(self, sans_lieux: bool = False) -> list[SelectOptionDict]:
         """La maison d'abord, puis les autres zones de Home Assistant, puis les lieux trouvés."""
         maison = self._zone_defaut()
         zones = sorted(self.hass.states.async_all("zone"), key=lambda z: (z.entity_id != maison, z.name.lower()))
@@ -602,7 +611,7 @@ class TrajetFlow(_Base):
         ]
         if not any(o["value"] == f"zone|{maison}" for o in options):
             options.insert(0, SelectOptionDict(value=f"zone|{maison}", label="🏠 Maison"))
-        return options + [_option_lieu(l) for l in self._lieux_depart]
+        return options if sans_lieux else options + [_option_lieu(l) for l in self._lieux_depart]
 
     async def async_step_depart(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
         if user_input is not None:
@@ -624,12 +633,13 @@ class TrajetFlow(_Base):
 
     async def async_step_destination(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
         if user_input is not None:
-            self._points.append(self._point_lieu(next(l for l in self._lieux if l["id"] == user_input["destination"])))
+            self._points.append(self._point_choisi(user_input["destination"], self._lieux))
             self._a_choisir.add(1)
             self._rang = 1
             return await self.async_step_point()  # contrainte d'arrivée, façon d'y aller
-        options = [_option_lieu(l) for l in self._lieux]
-        return self.async_show_form(step_id="destination", data_schema=vol.Schema({vol.Required("destination"): _liste(options)}))
+        # Les lieux trouvés d'abord, puis les zones (trajet qui arrive à la maison…).
+        options = [_option_lieu(l) for l in self._lieux] + self._options_zones()
+        return self.async_show_form(step_id="destination", data_schema=vol.Schema({vol.Required("destination", default=options[0]["value"]): _liste(options)}))
 
     # ---- Menu -----------------------------------------------------------------------
     async def async_step_menu(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
@@ -674,14 +684,13 @@ class TrajetFlow(_Base):
     async def async_step_lieu(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
         """Choix du lieu trouvé : nouvelle étape, ou nouveau lieu d'un point existant."""
         if user_input is not None:
-            l = next(x for x in self._lieux if x["id"] == user_input["lieu"])
             r = self._rang
             if self._apres_lieu == "ajouter":
-                self._points.insert(r, self._point_lieu(l, mode="transports", jours=None))
+                self._points.insert(r, self._point_choisi(user_input["lieu"], self._lieux, mode="transports", jours=None))
                 self._toucher(r, r + 1)
             else:
                 ancien = self._points[r]
-                nouveau = self._point_lieu(l)
+                nouveau = self._point_choisi(user_input["lieu"], self._lieux)
                 for k in ("mode", "duree", "sejour", "jours", "arrivee", "depart"):
                     nouveau[k] = ancien.get(k)
                 if r == 0:
@@ -689,8 +698,8 @@ class TrajetFlow(_Base):
                 self._points[r] = nouveau
                 self._toucher(r, r + 1)
             return await self.async_step_point()
-        options = [_option_lieu(l) for l in self._lieux]
-        return self.async_show_form(step_id="lieu", data_schema=vol.Schema({vol.Required("lieu"): _liste(options)}))
+        options = [_option_lieu(l) for l in self._lieux] + self._options_zones()
+        return self.async_show_form(step_id="lieu", data_schema=vol.Schema({vol.Required("lieu", default=options[0]["value"]): _liste(options)}))
 
     # ---- Modifier un point --------------------------------------------------------------
     async def async_step_modifier(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:

@@ -544,3 +544,33 @@ def test_debut_des_travaux_du_soir_selon_le_texte():
     jour = [["20261112T090000", "20261112T170000"]]
     assert avancer_periodes(jour, texte) == jour  # période de jour : inchangée
 
+
+async def test_trajet_retour_a_la_maison(hass: HomeAssistant, aioclient_mock):
+    """Trajet qui ne part pas de la maison et y arrive : départ d'un lieu, destination la zone « Maison »."""
+    from custom_components.transports_idf.planning import besoin_planning
+
+    hass.states.async_set("zone.home", "0", {"latitude": 48.85, "longitude": 2.30, "friendly_name": "Maison"})
+    hass.states.async_set("person.alex", "home", {"friendly_name": "Alex"})
+    brancher(aioclient_mock, dt_util.utcnow())
+    entree = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={"jeton": "abc", "zone": "zone.home"})
+    entree.add_to_hass(hass)
+    await hass.config_entries.async_setup(entree.entry_id)
+    await hass.async_block_till_done()
+    r = await hass.config_entries.subentries.async_init((entree.entry_id, "trajet"), context={"source": "user"})
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {
+        "nom": "Retour", "personne": "person.alex", "recherche_depart": "denfert", "recherche": "maison", "jours": ["0", "1"]})
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"depart": "stop_area:IDFM:70000"})
+    assert r["step_id"] == "destination"
+    valeurs = [o["value"] for o in r["data_schema"].schema["destination"].config["options"]]
+    assert "zone|zone.home" in valeurs  # la maison est proposée comme destination
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"destination": "zone|zone.home"})
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"mode": "transports", "arrivee_type": "avant", "arrivee_fin": "19:00:00"})
+    assert r["description_placeholders"]["resume"].splitlines()[-1].startswith("2. **Destination** · Maison")
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"next_step_id": "terminer"})
+    assert r["step_id"] == "itineraire"
+    assert any("to=2.3%3B48.85" in str(u) or "to=2.3;48.85" in str(u) for _, u, *_ in aioclient_mock.mock_calls if "journeys" in str(u))
+    r = await hass.config_entries.subentries.async_configure(r["flow_id"], {"itineraire": "0"})
+    assert r["type"] is FlowResultType.CREATE_ENTRY
+    d = next(s for s in entree.subentries.values() if s.subentry_type == "trajet").data
+    assert d["points"][0]["id"] == "stop_area:IDFM:70000" and d["points"][-1]["zone"] == "zone.home" and not d["points"][-1]["id"]
+    assert besoin_planning(d["points"]) and d["type_heure"] == "depart"
