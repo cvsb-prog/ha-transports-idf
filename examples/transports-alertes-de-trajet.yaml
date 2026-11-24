@@ -32,6 +32,7 @@ actions:
       titre: >-
         {% if d.type == 'perturbation' %}⚠️ {{ d.trajet }} ({{ repere }}) : perturbation
         {%- elif d.type == 'retour_normal' %}✅ {{ d.trajet }} ({{ repere }}) : trafic normal
+        {%- elif c.impossible and d.ecarts %}⛔ {{ d.trajet }} : en retard — {{ d.ecarts | join(', ') }}
         {%- elif c.impossible %}⛔ {{ d.trajet }} : arrivée à {{ heure }} impossible
         {%- else %}⏰ {{ d.trajet }} : pars à {{ c.depart_h }} au plus tard{% endif %}
       message: |-
@@ -52,6 +53,9 @@ actions:
         {%- endif %}
         {%- elif d.type == 'retour_normal' %}
         Plus aucune perturbation sur {{ d.itineraire }}.
+        {%- elif c.impossible and d.ecarts %}
+        Au mieux, en partant à {{ c.depart_h }} : {{ d.ecarts | join(', ') }}.
+        {{ c.texte }}
         {%- elif c.impossible %}
         Aucun itinéraire ne permet plus d'arriver à {{ heure }}.
         {%- else %}

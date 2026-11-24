@@ -1031,10 +1031,19 @@ class TransportsIdfCard extends HTMLElement {
     const classe = s.state === "on" ? (a.alerte === "interrompu" ? "mauvais" : "attention") : (a.rappel?.avance || 0) >= 3 ? "attention" : "";
     const tete = `<span class="trajet-nom">${echapper(a.trajet)}</span><span class="chaine">${this._chaine(etapes, true)}</span>
       <span class="trajet-fin">${this._rappel(a)}${horaires}</span>
-      <span class="trajet-depuis">depuis ${echapper(a.origine_nom || "la maison")}${a.detour?.nom ? ` · par ${echapper(a.detour.nom)}` : ""}${a.destination ? ` · vers ${echapper(a.destination)}` : ""} · ${arrivee ? "arrivée" : "départ"} ${heureCourte(a.heure)}</span>`;
+      <span class="trajet-depuis">depuis ${echapper(a.origine_nom || "la maison")}${(a.horaires?.length || 0) > 3 ? ` · ${a.horaires.length - 2} étapes` : a.detour?.nom ? ` · par ${echapper(a.detour.nom)}` : ""}${a.destination ? ` · vers ${echapper(a.destination)}` : ""} · ${arrivee ? "arrivée" : "départ"} ${heureCourte(a.heure)}</span>`;
 
     const corps = [];
     if (this._erreurs.has(id)) corps.push(`<div class="erreur">${echapper(this._erreurs.get(id))}</div>`);
+    // Trajet à étapes : heure à chaque point, écarts en rouge (rappel pendant la veille, sinon trajet habituel).
+    const points = (enVeille && a.rappel?.points) || nominal?.points;
+    if (points?.length) {
+      const morceaux = points.map((p, i) => {
+        const h = i ? p.arrivee_h : p.depart_h;
+        return `<span class="point-trajet">${echapper(p.nom)}${h ? ` ${echapper(h)}` : ""}${p.retard ? ` <span class="retard">(+${p.retard} min)</span>` : ""}</span>`;
+      });
+      corps.push(`<div class="sous points-trajet">${morceaux.join(" → ")}</div>`);
+    }
     const vus = new Set();
     const prop = (it, cle, note = "", classe = "proposition") => {
       if (!it?.etapes?.length) return;
@@ -1514,6 +1523,9 @@ class TransportsIdfCard extends HTMLElement {
       .proposition.prefere { border-top: 0; }
       .ecart.maintenant { color: var(--primary-color); font-weight: 600; }
       .ecart { font-weight: 400; font-size: .85em; color: var(--secondary-text-color); }
+      .points-trajet { line-height: 1.6; }
+      .points-trajet .point-trajet { white-space: nowrap; }
+      .points-trajet .retard { color: var(--error-color, #db4437); font-weight: 600; }
       .ecart.mieux { color: var(--ti-atteignable); font-weight: 600; }
       .intitule { min-width: 0 !important; }
       .nez { font-size: .8em; color: var(--secondary-text-color); margin-left: 1px; }

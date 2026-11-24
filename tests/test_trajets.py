@@ -270,3 +270,13 @@ async def test_trajet_a_etapes(hass: HomeAssistant, aioclient_mock, freezer):
     await hass.async_block_till_done()
     r = capteur(hass).attributes["rappel"]
     assert r["depart_h"] == "8 h 14" and r["retard"] is True and r["type_heure"] == "arrivee" and r["heure_cible"] == "9 h 05"
+    a = capteur(hass).attributes
+    assert a["possible"] is False and [h["retard"] for h in a["horaires"]] == [0, 0, 0, 9]
+    # Événement d'alerte : heure visée = destination (pas le départ planifié), écarts lisibles.
+    evts = []
+    hass.bus.async_listen("transports_idf_alerte", lambda ev: evts.append(ev.data))
+    trafic = e.runtime_data.trafic
+    sous_id = next(iter(e.subentries))
+    trafic._envoyer(e.subentries[sous_id], trafic.etats[sous_id], "depart_anticipe", set())
+    await hass.async_block_till_done()
+    assert (evts[0]["heure"], evts[0]["type_heure"], evts[0]["ecarts"]) == ("09:05:00", "arrivee", ["Bureau 9 h 14 (+9 min)"])
