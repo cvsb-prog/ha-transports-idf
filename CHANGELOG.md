@@ -5,6 +5,15 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.1.0b5] - 2026-11-24
+
+Pré-version de test.
+
+### Corrigé
+
+- Trajet à étapes en retard : la notification disait « arrivée à <heure du départ planifié> impossible ». L'événement d'alerte porte maintenant l'heure visée à la destination et les écarts (« École 22 h 05 (+5 min) ») ; l'automatisation d'exemple les affiche (à reprendre dans la tienne).
+- Carte : heures de chaque point d'un trajet à étapes, écarts en rouge ; « N étapes » dans l'en-tête du trajet.
+
 ## [1.1.0b4] - 2026-11-13
 
 Pré-version de test : les trajets à étapes sont calculés.
