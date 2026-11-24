@@ -285,9 +285,11 @@ async def test_rappel_pas_en_retard_si_un_depart_arrive_a_l_heure(hass: HomeAssi
     etat.direct = [option("0805", "0836"), option("0812", "0850")]
     await coord._rappel(t, etat, maintenant)
     assert etat.rappel["depart"] == "20261106T081200" and not etat.rappel["retard"]
+    # Plus aucun départ à venir n'arrive à l'heure, mais le départ conseillé (7 h 50) est passé : Home Assistant ne
+    # sait pas si la personne est partie, le rappel reste sur lui, sans « retard » (1.1 : plus d'alerte à tort).
     etat.direct = [option("0805", "0912")]
     await coord._rappel(t, etat, maintenant)
-    assert etat.rappel["retard"] and etat.rappel["arrivee"] == "20261106T091200"
+    assert etat.rappel["depart"] == "20261106T075000" and not etat.rappel["retard"]
 
 
 async def test_sens_de_la_ligne():

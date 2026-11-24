@@ -115,6 +115,12 @@ async def test_rappel_arrivee(hass: HomeAssistant, aioclient_mock, freezer):
     await e.runtime_data.trafic.async_refresh()
     assert [ev.data["type"] for ev in evenements] == ["depart_anticipe", "depart_anticipe"]
     assert evenements[1].data["conseil"]["avance"] == 14
+    # Le bus conseillé (+6 min) est parti ; le tram suivant arriverait trop tard. Home Assistant ne sait pas si la
+    # personne est partie : le rappel reste sur le bus, pas de « retard » ni de nouvelle alerte.
+    freezer.move_to("2026-11-06 06:09:00+00:00")
+    await e.runtime_data.trafic.async_refresh()
+    r = capteur(hass).attributes["rappel"]
+    assert r["retard"] is False and r["avance"] == 14 and len(evenements) == 2
 
 
 async def test_detour(hass: HomeAssistant, aioclient_mock, freezer):
