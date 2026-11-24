@@ -13,6 +13,7 @@ Pré-version de test.
 
 - Trajet à étapes en retard : la notification disait « arrivée à <heure du départ planifié> impossible ». L'événement d'alerte porte maintenant l'heure visée à la destination et les écarts (« École 22 h 05 (+5 min) ») ; l'automatisation d'exemple les affiche (à reprendre dans la tienne).
 - Carte : heures de chaque point d'un trajet à étapes, écarts en rouge ; « N étapes » dans l'en-tête du trajet.
+- Trajet en retard : la mise à jour suivant l'alerte plantait, les trajets devenaient indisponibles et disparaissaient de la carte. L'alerte n'est plus renvoyée tant que le retard dure.
 
 ## [1.1.0b4] - 2026-11-13
 
