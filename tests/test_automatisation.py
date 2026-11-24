@@ -102,3 +102,22 @@ async def test_rappel_dix_minutes_avant(hass: HomeAssistant):
     await hass.async_block_till_done()
     assert appels[0].data["title"] == "🚶 Travail : pars à 8 h 20"
     assert appels[0].data["message"].startswith("Bus 192 → RER B\nDépart 8 h 20")
+
+
+async def test_retard_ou_arrivee_prevue_dans_toutes_les_alertes(hass: HomeAssistant):
+    """Chaque alerte finit par l'arrivée prévue, ou le retard prévu (destination, étapes)."""
+    hass.states.async_set("person.alex", "home", {"device_trackers": []})
+    hass.states.async_set("binary_sensor.workday_sensor", "on")
+    appels = async_mock_service(hass, "persistent_notification", "create")
+    config = await hass.async_add_executor_job(yaml_util.load_yaml, AUTO)
+    assert await async_setup_component(hass, "automation", {"automation": [config]})
+    commun = {**DONNEES, "type_heure": "arrivee", "heure": "09:00:00", "depart_habituel": "08:20:00", "nouvelles": [], "perturbations": []}
+    hass.bus.async_fire("transports_idf_alerte", {**commun, "type": "rappel_depart", "arrivee_prevue": "8 h 52", "ecarts": [],
+        "conseil": {"depart_h": "8 h 20", "resume": "Bus 192 → RER B", "texte": "Départ 8 h 20"}})
+    await hass.async_block_till_done()
+    assert "\nArrivée prévue 8 h 52 (à l'heure).\n" in appels[0].data["message"]
+    p = {"id": "p1", "titre": "RER B : trafic interrompu", "lignes_trajet": ["RER B"]}
+    hass.bus.async_fire("transports_idf_alerte", {**commun, "type": "perturbation", "nouvelles": [p], "perturbations": [p],
+        "arrivee_prevue": "9 h 12", "ecarts": ["arrivée 9 h 12 (+12 min)"], "conseil": {"depart_h": "8 h 05", "impossible": True}})
+    await hass.async_block_till_done()
+    assert "\nRetard prévu : arrivée 9 h 12 (+12 min).\n" in appels[1].data["message"]

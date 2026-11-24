@@ -678,13 +678,16 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         if d.get("points") and besoin_planning(d["points"]):
             await self._rappel_etapes(t, etat, jour, maintenant)
             return
+        if self._rappel_passe(etat, jour, maintenant):
+            return
         plans = await self._plans(t, jour, None, None, etat.bloquees, 3)
         cible = datetime.combine(jour, _heure(d[T_HEURE]))
         if d.get(T_TYPE_HEURE) == "arrivee":
             # Départs calculés pour l'heure d'arrivée, et ceux au départ de maintenant (un départ plus tardif peut
-            # encore arriver à l'heure). Les départs déjà passés restent candidats : Home Assistant ne sait pas si la
-            # personne est partie, le rappel ne doit pas passer « en retard » juste parce que l'heure a tourné.
+            # encore arriver à l'heure). Seuls ceux à venir sont proposés : on ne conseille pas un départ déjà passé.
             candidats = plans + list(etat.direct) if jour == maintenant.date() else plans
+            if jour == maintenant.date():
+                candidats = [o for o in candidats if _dep(o) and _dep(o) >= maintenant - timedelta(minutes=1)]
             a_l_heure = [o for o in candidats if _arr(o) and _arr(o) <= cible]
             if a_l_heure:
                 meilleur = max(a_l_heure, key=_dep)  # le plus tard possible en arrivant à l'heure
@@ -709,19 +712,33 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
             if d.get(T_TYPE_HEURE) == "arrivee" or (avec_detour(d, jour) and d.get(T_DET_HEURE))
             else 0,
             "retard": d.get(T_TYPE_HEURE) == "arrivee" and bool(_arr(meilleur) and _arr(meilleur) > cible),
+            "retard_min": max(0, round((_arr(meilleur) - cible).total_seconds() / 60)) if d.get(T_TYPE_HEURE) == "arrivee" and _arr(meilleur) else 0,
             "habituel": _lignes(meilleur) == self._preferees(t),
         }
+
+    @staticmethod
+    def _rappel_passe(etat: EtatTrajet, jour: date, maintenant: datetime) -> bool:
+        """Le départ conseillé est passé : on le garde tel quel (Home Assistant ne sait pas si la personne est partie)."""
+        r = etat.rappel
+        dep = date_navitia(r.get("depart")) if r and not r.get("impossible") else None
+        return bool(dep and dep.date() == jour and dep < maintenant - timedelta(minutes=1))
 
     async def _rappel_etapes(self, t, etat: EtatTrajet, jour: date, maintenant: datetime) -> None:
         """Trajet à étapes : le départ planifié (comme le rappel des autres trajets).
 
-        On ne recalcule pas « au départ de maintenant » une fois l'heure passée : Home Assistant ne sait pas si la
-        personne est partie, et un trajet tenable passerait « en retard » deux minutes après chaque départ planifié.
-        Les départs possibles à partir de maintenant restent proposés dans la carte.
+        Une fois le départ conseillé passé, il est gardé tel quel (Home Assistant ne sait pas si la personne est
+        partie). Si le plan voudrait un départ déjà passé alors que le conseil précédent ne l'est pas (perturbation,
+        trajet plus long que prévu), on repart de maintenant : retards et écarts, une alerte.
         """
         d = t.data
+        if self._rappel_passe(etat, jour, maintenant):
+            return
         plans = await self._plans(t, jour, None, None, etat.bloquees, 1)
         meilleur = plans[0] if plans else None
+        if jour == maintenant.date() and (meilleur is None or (_dep(meilleur) and _dep(meilleur) < maintenant - timedelta(minutes=1))):
+            # Le plan voudrait un départ déjà passé (perturbation, trajet plus long que prévu) : au mieux, maintenant.
+            maintenant_plans = await self._plans(t, jour, maintenant, None, etat.bloquees, 1)
+            meilleur = maintenant_plans[0] if maintenant_plans else None
         pts = points_du_jour(points_du_trajet(d), jour)
         _, haut, _, _ = bornes_point(pts, len(pts) - 1)
         cible = datetime.combine(jour, datetime.min.time()) + timedelta(minutes=haut) if haut < INF else None
@@ -801,7 +818,9 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
                 # Trajet à étapes : l'heure visée est celle de la destination (rappel), pas le départ planifié.
                 "heure": r.get("heure") or t.data.get(T_HEURE),
                 "type_heure": r.get("type_heure") if r.get("points") else t.data.get(T_TYPE_HEURE, "depart"),
-                "ecarts": [f"{p['nom']} {p.get('arrivee_h') or p.get('depart_h')} (+{p['retard']} min)" for p in r.get("points") or [] if p.get("retard")],
+                "ecarts": [f"{p['nom']} {p.get('arrivee_h') or p.get('depart_h')} (+{p['retard']} min)" for p in r.get("points") or [] if p.get("retard")]
+                or ([f"arrivée {r.get('arrivee_h')} (+{r['retard_min']} min)"] if r.get("retard_min") else []),
+                "arrivee_prevue": r.get("arrivee_h"),
                 "depart_habituel": heure_depart_maison(t.data),
                 "conseil": conseil,
                 "itineraire": t.data.get(T_RESUME),
