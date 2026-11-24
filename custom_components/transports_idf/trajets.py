@@ -679,10 +679,10 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         plans = await self._plans(t, jour, None, None, etat.bloquees, 3)
         cible = datetime.combine(jour, _heure(d[T_HEURE]))
         if d.get(T_TYPE_HEURE) == "arrivee":
-            # Départs encore possibles : ceux calculés pour l'heure d'arrivée et ceux au départ de maintenant.
+            # Départs calculés pour l'heure d'arrivée, et ceux au départ de maintenant (un départ plus tardif peut
+            # encore arriver à l'heure). Les départs déjà passés restent candidats : Home Assistant ne sait pas si la
+            # personne est partie, le rappel ne doit pas passer « en retard » juste parce que l'heure a tourné.
             candidats = plans + list(etat.direct) if jour == maintenant.date() else plans
-            if jour == maintenant.date():
-                candidats = [o for o in candidats if _dep(o) and _dep(o) >= maintenant - timedelta(minutes=1)]
             a_l_heure = [o for o in candidats if _arr(o) and _arr(o) <= cible]
             if a_l_heure:
                 meilleur = max(a_l_heure, key=_dep)  # le plus tard possible en arrivant à l'heure
