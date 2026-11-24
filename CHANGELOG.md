@@ -5,6 +5,17 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Ajouté
+
+- Suivi du trajet après le rappel « pars à … » : le départ est alors supposé respecté et figé. En route, l'arrivée est recalculée depuis ce départ quand les perturbations changent (toutes les 6 min tant qu'une perturbation est en cours), et chaque nouvelle prévision est annoncée (nouveau type d'événement `prevision`, champ `en_route`).
+- La veille dure jusqu'à l'arrivée prévue + 15 min.
+
+### Modifié
+
+- Avant le départ : une perturbation qui demande de partir avant maintenant donne une alerte (départ dès que possible, retard prévu) ; un départ à avancer d'au moins 3 min et encore à venir reste conseillé ; une perturbation qui disparaît recale le départ sans rien dire.
+- Sans conseil antérieur (redémarrage de Home Assistant pendant la veille), un départ déjà passé est supposé respecté.
+- Automatisation d'exemple : titre « 🔄 … : nouvelle prévision », plus de « pars à … » une fois en route.
+
 ## [1.1.0b9] - 2026-11-24
 
 Pré-version de test.
