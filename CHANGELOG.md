@@ -5,6 +5,14 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.1.0b6] - 2026-11-24
+
+Pré-version de test.
+
+### Corrigé
+
+- Trajet à étapes tenable : il passait « en retard » (et l'alerte partait) deux minutes après chaque départ planifié, l'intégration recalculant au départ de maintenant sans savoir si la personne était partie. Le rappel garde le départ planifié ; seule une borne intenable dès la planification, ou une perturbation, déclenche l'alerte.
+
 ## [1.1.0b5] - 2026-11-24
 
 Pré-version de test.
