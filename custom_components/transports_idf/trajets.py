@@ -321,15 +321,22 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
             "detour": reprise is not None,
         }
 
-    async def _plans(self, t, jour: date, quand: datetime | None, lignes: list[str] | None, bloquees: list[str], nombre: int = 1) -> list[dict[str, Any]]:
+    async def _plans(self, t, jour: date, quand: datetime | None, lignes: list[str] | None, bloquees: list[str], nombre: int = 1, pas_avant: bool = False) -> list[dict[str, Any]]:
         """Itinéraires complets (détour compris) pour un jour donné.
 
         quand=None : on suit l'heure du trajet (arrivée cible ou départ) — nominal et rappel.
         quand=datetime : départ de la maison à cette heure — calcul au départ de maintenant.
+        pas_avant (trajet à étapes) : quand n'est qu'une borne ; si les horaires du jour font partir plus
+        tard, on les garde (sinon, au départ de maintenant on attendrait des heures à une étape).
         """
         d = t.data
         if d.get("points") and besoin_planning(d["points"]):
-            return await self._plans_etapes(t, jour, quand, lignes is not None, [] if lignes is not None else bloquees, nombre)
+            preferees, bloq = lignes is not None, [] if lignes is not None else bloquees
+            if pas_avant and quand is not None:
+                prevus = await self._plans_etapes(t, jour, None, preferees, bloq, nombre)
+                if prevus and date_navitia(prevus[0]["depart"]) >= quand - timedelta(minutes=1):
+                    return prevus
+            return await self._plans_etapes(t, jour, quand, preferees, bloq, nombre)
         depuis, vers = origine_navitia(self.hass, self.config_entry, d), d[T_DEST_ID]
         heure = _heure(d[T_HEURE])
         cible = datetime.combine(jour, heure)
@@ -661,8 +668,8 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
         # Jour de référence pour le détour : l'occurrence en cours de veille, sinon aujourd'hui.
         jour = self.prochaine_occurrence(t.data, maintenant) if etat.en_veille else maintenant.date()
         pref, autres = await asyncio.gather(
-            self._plans(t, jour, maintenant, self._preferees(t), [], 1),
-            self._plans(t, jour, maintenant, None, etat.bloquees, NB_DIRECT),
+            self._plans(t, jour, maintenant, self._preferees(t), [], 1, pas_avant=True),
+            self._plans(t, jour, maintenant, None, etat.bloquees, NB_DIRECT, pas_avant=True),
         )
         liste = [{**o, "prefere": True} for o in pref]
         vus = {(o["depart"], o["resume"]) for o in liste}
