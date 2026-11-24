@@ -5,6 +5,14 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.1.0b8] - 2026-11-24
+
+Pré-version de test.
+
+### Ajouté
+
+- Rappel « pars à … » 10 minutes avant le départ conseillé (nouveau type d'événement `rappel_depart`, une fois par veille), affiché par l'automatisation d'exemple.
+
 ## [1.1.0b7] - 2026-11-24
 
 Pré-version de test.
