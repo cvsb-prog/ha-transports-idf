@@ -5,6 +5,10 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Corrigé
+
+- Trajet à étapes, départs « au départ de maintenant » (carte) : on garde les horaires du jour quand ils partent plus tard, au lieu de partir tout de suite pour attendre des heures à une étape (durée affichée de 21 h 46 la nuit).
+
 ## [1.1.0b10] - 2026-11-24
 
 Pré-version de test.

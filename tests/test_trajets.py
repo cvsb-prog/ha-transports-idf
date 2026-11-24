@@ -317,6 +317,55 @@ async def test_trajet_a_etapes(hass: HomeAssistant, aioclient_mock, freezer):
     assert [x["type"] for x in evts] == ["rappel_depart"]
 
 
+async def test_etapes_departs_depuis_maintenant(hass: HomeAssistant, aioclient_mock, freezer):
+    """Au départ de maintenant, un trajet à étapes garde les horaires du jour s'ils partent plus tard.
+
+    Sinon (calcul à 6 h pour une école qui ouvre à 8 h 20), on partirait à 6 h pour attendre 2 h à l'étape.
+    """
+    from datetime import datetime
+
+    from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
+
+    from custom_components.transports_idf.points import fenetre, point
+
+    await hass.config.async_set_time_zone("Europe/Paris")
+    freezer.move_to("2026-11-06 05:00:00+00:00")  # vendredi, 6 h à Paris
+    hass.states.async_set("zone.home", "0", {"latitude": 48.7800, "longitude": 2.3170, "friendly_name": "Maison"})
+    aioclient_mock.get(re.compile(r"/v2/navitia/journeys\?.*direct_path=only"), json={"journeys": []})
+
+    async def journeys(method, url, data):
+        quand = datetime.strptime(url.query["datetime"], "%Y%m%dT%H%M%S")
+        dep = quand + timedelta(minutes=3) if url.query.get("datetime_represents") != "arrival" else quand - timedelta(minutes=23)
+        j = copy.deepcopy(E.ITINERAIRES)
+        j["journeys"] = j["journeys"][:1]
+        j["journeys"][0]["departure_date_time"] = dep.strftime("%Y%m%dT%H%M%S")
+        j["journeys"][0]["arrival_date_time"] = (dep + timedelta(minutes=20)).strftime("%Y%m%dT%H%M%S")
+        return AiohttpClientMockResponse("get", url, json=j)
+
+    reseau(aioclient_mock)
+    aioclient_mock.get(re.compile(r"/line_reports/lines/"), json={"disruptions": []})
+    aioclient_mock.get(re.compile(r"/v2/navitia/journeys"), side_effect=journeys)
+    aioclient_mock.get(re.compile(r"/stop-monitoring"), json=E.siri(dt_util.utcnow(), []))
+    pts = [point("Maison", zone="zone.home"),
+           point("École", id="poi:ecole", mode="marche", duree=6, sejour=5, arrivee=fenetre("entre", "08:20:00", "08:20:00")),
+           point("Pressing", id="stop_area:IDFM:71946", mode="transports", sejour=3),
+           point("Bureau", id="stop_area:IDFM:70000", mode="transports", arrivee=fenetre("avant", fin="09:20:00"))]
+    pts[2]["libre"] = pts[3]["libre"] = True
+    e = entree(hass, points=pts, type_heure="depart", heure_depart="08:14:00", depart_habituel="08:14:00")
+    assert await hass.config_entries.async_setup(e.entry_id)
+    await hass.async_block_till_done()
+    trafic, sous_id = e.runtime_data.trafic, next(iter(e.subentries))
+    await trafic.calculer_maintenant(sous_id)
+    d = trafic.etats[sous_id].direct
+    assert d and d[0]["depart_h"] == "8 h 14" and d[0]["arrivee_h"] == "9 h 14"  # pas 6 h 00 → 9 h 14
+    # Heure du jour passée : au départ de maintenant (8 h 30), en retard à l'école.
+    freezer.move_to("2026-11-06 07:30:00+00:00")
+    trafic.etats[sous_id].direct_le = None
+    await trafic.calculer_maintenant(sous_id)
+    d = trafic.etats[sous_id].direct
+    assert d[0]["depart_h"] == "8 h 30" and d[0]["possible"] is False
+
+
 async def test_film_d_une_matinee(hass: HomeAssistant, aioclient_mock, freezer):
     """Trajet « arriver avant 9 h », bus toutes les 10 min, 32 min de trajet. Minute par minute :
     7 h 30 rien ; 7 h 56 une perturbation rallonge le trajet de 30 min, le départ nécessaire (7 h 50) est passé →
