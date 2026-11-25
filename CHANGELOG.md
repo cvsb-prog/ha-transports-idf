@@ -5,6 +5,10 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.1.0b11] - 2026-11-25
+
+Pré-version de test.
+
 ### Ajouté
 
 - Carte, trajet à étapes : sous les départs prévus, une ligne « maintenant, sans les étapes » (en partant maintenant, tout droit vers la destination).
