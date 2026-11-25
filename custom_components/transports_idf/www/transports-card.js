@@ -1060,6 +1060,11 @@ class TransportsIdfCard extends HTMLElement {
     if (direct.length) {
       direct.forEach((it, n) => {
         if (n === 1 && direct[0].prefere) corps.push(`<div class="separation" aria-hidden="true"></div>`);
+        if (it.sans_etapes) {
+          corps.push(`<div class="separation" aria-hidden="true"></div>`);
+          prop(it, `d${n}`, `<span class="ecart">maintenant, sans les étapes</span>`);
+          return;
+        }
         prop(it, `d${n}`, it.prefere ? "" : ecartHtml(it.gain), `proposition${it.prefere ? " prefere" : ""}`);
       });
     } else if (this._enCours.has(id)) corps.push(`<div class="sous">Calcul des départs…</div>`);

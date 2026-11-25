@@ -358,6 +358,9 @@ async def test_etapes_departs_depuis_maintenant(hass: HomeAssistant, aioclient_m
     await trafic.calculer_maintenant(sous_id)
     d = trafic.etats[sous_id].direct
     assert d and d[0]["depart_h"] == "8 h 14" and d[0]["arrivee_h"] == "9 h 14"  # pas 6 h 00 → 9 h 14
+    # En plus, partir maintenant tout droit vers la destination, sans les étapes.
+    assert d[-1]["sans_etapes"] is True and d[-1]["depart_h"] == "6 h 03" and not d[-1].get("points")
+    assert sum(1 for x in d if x.get("sans_etapes")) == 1
     # Heure du jour passée : au départ de maintenant (8 h 30), en retard à l'école.
     freezer.move_to("2026-11-06 07:30:00+00:00")
     trafic.etats[sous_id].direct_le = None

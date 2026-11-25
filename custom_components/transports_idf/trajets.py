@@ -595,7 +595,7 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
                 etat.rappel = None
                 if etat.direct_le and maintenant - etat.direct_le > DUREE_DIRECT:
                     etat.direct, etat.direct_le = [], None
-            etat.rechange = next((o for o in etat.direct if not set(_lignes(o)) & set(etat.bloquees)), None) if etat.bloquees else None
+            etat.rechange = next((o for o in etat.direct if not o.get("sans_etapes") and not set(_lignes(o)) & set(etat.bloquees)), None) if etat.bloquees else None
             self._alerter(t, etat)
 
         for sid in list(self.etats):
@@ -682,6 +682,12 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
             ref = _arr(liste[0])
             for o in liste[1:]:
                 o["gain"] = round((ref - _arr(o)).total_seconds() / 60) if ref and _arr(o) else None
+        # Trajet à étapes (rendez-vous à heure fixe…) : en plus, partir maintenant tout droit vers la destination.
+        if t.data.get("points") and besoin_planning(t.data["points"]):
+            pts = points_du_trajet(t.data)
+            tout_droit = [o for o in await self._options(self._navitia_point(pts[0]), self._navitia_point(pts[-1]), maintenant, "departure", None, etat.bloquees) if _dep(o) and _arr(o)]
+            if tout_droit:
+                liste.append({**min(tout_droit, key=_arr), "prefere": False, "sans_etapes": True})
         await self._enrichir(liste, etat)
         etat.direct, etat.direct_le = liste, maintenant
 
@@ -701,7 +707,7 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
             # Départs calculés pour l'heure d'arrivée, et ceux au départ de maintenant (un départ plus tardif peut
             # encore arriver à l'heure). Seuls ceux à venir sont proposés : on ne conseille pas un départ déjà passé…
             # sauf sans conseil antérieur (démarrage de Home Assistant après l'heure) : départ supposé respecté.
-            candidats = plans + list(etat.direct) if jour == maintenant.date() else plans
+            candidats = plans + [o for o in etat.direct if not o.get("sans_etapes")] if jour == maintenant.date() else plans
             if jour == maintenant.date() and etat.rappel is not None:
                 candidats = [o for o in candidats if _dep(o) and _dep(o) >= maintenant - timedelta(minutes=1)]
             a_l_heure = [o for o in candidats if _arr(o) and _arr(o) <= cible]
