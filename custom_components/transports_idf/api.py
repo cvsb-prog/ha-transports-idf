@@ -1121,22 +1121,27 @@ ICONES_MODE = {"marche": "🚶", "velo": "🚲", "voiture": "🚗", "transports"
 
 
 def texte_itineraire(etapes: list[dict[str, Any]], depart: Any = None, arrivee: Any = None) -> str:
-    """Version texte des étapes, pour les notifications (une étape par ligne)."""
-    lignes = []
-    if heure_navitia(depart):
-        lignes.append(f"Départ {heure_navitia(depart)}")
+    """Version texte des étapes, pour les notifications (une étape par ligne).
+
+    Sans répétitions : ni ligne « Départ / Arrivée » (le titre et l'en-tête de la notification les donnent),
+    ni lieu répété (la marche mène à l'arrêt de la ligne suivante, qui le nomme ; une correspondance sur le
+    même arrêt ne le renomme pas). depart et arrivee restent acceptés pour compatibilité.
+    """
+    lignes, ici = [], None
     for e in etapes:
         if e["type"] == "detour":
             lignes.append(f"{ICONES_MODE.get(e.get('mode'), '🚶')} {e['duree']} min jusqu'à {e.get('vers')}")
+            ici = e.get("vers")
         elif e["type"] == "pause":
             lignes.append(f"⏸ {e['duree']} min à {e.get('lieu')}" + (f", reprise {e['reprise']}" if e.get("reprise") else ""))
         elif e["type"] == "marche":
-            lignes.append(f"🚶 {e['duree']} min" + (f" jusqu'à {e['vers']}" if e.get("vers") else ""))
+            lignes.append(f"🚶 {e['duree']} min")
+            ici = None  # l'arrêt où mène la marche est nommé par la ligne suivante
         else:
             ligne = f"{e.get('mode') or ''} {e.get('nom') or ''}".strip()
-            lignes.append(f"{e.get('depart') or '?'} {ligne} à {e.get('de')} → {e.get('vers')} ({e.get('arrivee') or '?'})")
-    if heure_navitia(arrivee):
-        lignes.append(f"Arrivée {heure_navitia(arrivee)}")
+            de = "" if e.get("de") and e.get("de") == ici else f" {e.get('de')}"
+            lignes.append(f"{e.get('depart') or '?'} {ligne}{de} → {e.get('vers')} ({e.get('arrivee') or '?'})")
+            ici = e.get("vers")
     return "\n".join(lignes)
 
 

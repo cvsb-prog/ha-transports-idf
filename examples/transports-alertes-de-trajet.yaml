@@ -30,6 +30,15 @@ actions:
         {% set h = d.heure or d.heure_depart or '00:00' %}{{ h[:2] | int }} h {{ h[3:5] }}
       repere: "{{ ('arrivée ' if d.type_heure == 'arrivee' else 'départ ') ~ heure }}"
       c: "{{ d.conseil or {} }}"
+      # Départ conseillé donné dans le message d'une perturbation (avant le départ).
+      conseil_perturbation: "{{ d.type == 'perturbation' and c.depart_h and not c.impossible and not d.en_route }}"
+      # Messages qui donnent eux-mêmes l'arrivée (en-tête « horaire ») : pas de répétition en pied.
+      arrivee_dite: "{{ d.type in ['rappel_depart', 'prevision'] or conseil_perturbation }}"
+      retard_arrivee: "{{ (d.ecarts or []) | select('match', 'arrivée ') | first | default('') }}"
+      # En-tête court : « Arrivée 9 h 11 (58 min) · RER B · direct », ou « Arrivée 9 h 16 (+5 min) · … » en retard.
+      horaire: >-
+        {% if retard_arrivee %}{{ retard_arrivee[0] | upper ~ retard_arrivee[1:] }}{% else %}Arrivée {{ c.arrivee_h or d.arrivee_prevue }}{{ ' (' ~ c.duree_min ~ ' min)' if c.duree_min else '' }}{% endif %} · {{ c.parcours or c.resume }}
+      ecarts_pied: "{{ (d.ecarts or []) | reject('match', 'arrivée ') | list if arrivee_dite else (d.ecarts or []) }}"
       titre: >-
         {% if d.type == 'perturbation' %}⚠️ {{ d.trajet }} ({{ repere }}) : perturbation
         {%- elif d.type == 'retour_normal' %}✅ {{ d.trajet }} ({{ repere }}) : trafic normal
@@ -46,10 +55,10 @@ actions:
         {%- if d.perturbations | count > d.nouvelles | count %}
         ({{ d.perturbations | count }} perturbations en cours sur le trajet)
         {%- endif %}
-        {%- if c.depart_h and not c.impossible and not d.en_route %}
-        Pour arriver à {{ heure }} : pars à {{ c.depart_h }} au plus tard ({{ c.resume }}).
+        {%- if conseil_perturbation %}
+        Pour arriver à {{ heure }} : pars à {{ c.depart_h }} au plus tard ({{ horaire[0] | lower ~ horaire[1:] }}).
         {%- elif d.rechange and d.rechange.texte %}
-        Itinéraire de rechange ({{ d.rechange.resume }}) :
+        Itinéraire de rechange ({{ d.rechange.depart_h ~ ' → ' ~ d.rechange.arrivee_h ~ ' · ' if d.rechange.depart_h and d.rechange.arrivee_h else '' }}{{ d.rechange.resume }}) :
         {{ d.rechange.texte }}
         {%- elif d.rechange and d.rechange.resume %}
         Rechange : {{ d.rechange.resume }}
@@ -57,12 +66,12 @@ actions:
         {%- elif d.type == 'retour_normal' %}
         Plus aucune perturbation sur {{ d.itineraire }}.
         {%- elif d.type == 'rappel_depart' %}
-        {{ c.resume }}
+        {{ horaire }}
         {{ c.texte }}
         {%- elif d.type == 'prevision' and c.impossible %}
         Aucun itinéraire ne permet plus d'aller au bout du trajet.
         {%- elif d.type == 'prevision' %}
-        {{ c.resume }}
+        {{ horaire }}
         {%- elif c.impossible and d.ecarts %}
         Au mieux, en partant à {{ c.depart_h }} : {{ d.ecarts | join(', ') }}.
         {{ c.texte }}
@@ -72,11 +81,11 @@ actions:
         Pour arriver à {{ heure }}, {{ c.avance }} min plus tôt que d'habitude (départ habituel {{ (d.depart_habituel[:2] | int) ~ ' h ' ~ d.depart_habituel[3:5] }}) :
         {{ c.texte }}
         {%- endif %}
-        {#- Dans tous les cas : l'arrivée prévue, ou le retard prévu à la destination et aux étapes. #}
+        {#- Dans tous les cas : le retard prévu (destination et étapes), sinon l'arrivée prévue si le message ne la donne pas déjà. #}
         {%- if not (d.type == 'depart_anticipe' and c.impossible) %}
-        {%- if d.ecarts %}
-        Retard prévu : {{ d.ecarts | join(', ') }}.
-        {%- elif d.arrivee_prevue %}
+        {%- if ecarts_pied %}
+        Retard prévu : {{ ecarts_pied | join(', ') }}.
+        {%- elif d.arrivee_prevue and not arrivee_dite %}
         Arrivée prévue {{ d.arrivee_prevue }}{{ " (à l'heure)" if d.type_heure == 'arrivee' else '' }}.
         {%- endif %}
         {%- endif %}

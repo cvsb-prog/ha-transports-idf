@@ -5,6 +5,12 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Modifié
+
+- Notifications plus courtes : l'itinéraire détaillé n'a plus de lignes « Départ / Arrivée » ni de lieux répétés (« 🚶 5 min » puis « 8 h 07 Bus 192 Les Blagis → … » ; une correspondance au même arrêt ne le renomme pas).
+- Événement : le conseil porte `duree_min` et `parcours` (lignes et correspondances, sans la durée).
+- Automatisation d'exemple : « pars à » et « nouvelle prévision » commencent par « Arrivée 9 h 11 (58 min) · lignes · direct » (ou « Arrivée 9 h 16 (+5 min) » en retard) et ne répètent plus l'arrivée en pied ; l'itinéraire de rechange donne ses heures de départ et d'arrivée.
+
 ## [1.1.0b11] - 2026-11-25
 
 Pré-version de test.
