@@ -5,6 +5,10 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.1.0b12] - 2026-11-26
+
+Pré-version de test.
+
 ### Modifié
 
 - Notifications plus courtes : l'itinéraire détaillé n'a plus de lignes « Départ / Arrivée » ni de lieux répétés (« 🚶 5 min » puis « 8 h 07 Bus 192 Les Blagis → … » ; une correspondance au même arrêt ne le renomme pas).
