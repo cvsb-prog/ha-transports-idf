@@ -899,6 +899,11 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
     def _envoyer(self, t, etat: EtatTrajet, type_: str, nouvelles: set[str]) -> None:
         r = etat.rappel or {}
         conseil = {**r, "impossible": bool(r.get("impossible") or r.get("retard"))} if r else None
+        if conseil:
+            # Pour un en-tête court : « Arrivée 9 h 11 (58 min) · RER B · direct ».
+            sections = r.get("sections") or []
+            conseil["duree_min"] = round(r["duree"] / 60) if isinstance(r.get("duree"), int) else None
+            conseil["parcours"] = resume_itineraire(sections, None, len(sections) - 1 if sections else None)
         self.hass.bus.async_fire(
             EVENEMENT_ALERTE,
             {

@@ -574,3 +574,21 @@ async def test_trajet_retour_a_la_maison(hass: HomeAssistant, aioclient_mock):
     d = next(s for s in entree.subentries.values() if s.subentry_type == "trajet").data
     assert d["points"][0]["id"] == "stop_area:IDFM:70000" and d["points"][-1]["zone"] == "zone.home" and not d["points"][-1]["id"]
     assert besoin_planning(d["points"]) and d["type_heure"] == "depart"
+
+
+def test_texte_itineraire_sans_repetition():
+    """Une ligne par étape, sans « Départ / Arrivée » ni lieu répété."""
+    from custom_components.transports_idf.api import texte_itineraire
+
+    etapes = [
+        {"type": "detour", "mode": "marche", "duree": 6, "vers": "École"},
+        {"type": "pause", "duree": 5, "lieu": "École", "reprise": "8 h 25"},
+        {"type": "marche", "duree": 5, "vers": "Les Blagis"},
+        {"type": "transport", "mode": "Bus", "nom": "192", "de": "Les Blagis", "vers": "Bourg-la-Reine", "depart": "8 h 35", "arrivee": "8 h 40"},
+        {"type": "transport", "mode": "RER", "nom": "B", "de": "Bourg-la-Reine", "vers": "Denfert-Rochereau", "depart": "8 h 43", "arrivee": "8 h 59"},
+        {"type": "marche", "duree": 3, "vers": "Bureau"},
+    ]
+    assert texte_itineraire(etapes, "20261106T081400", "20261106T090200") == (
+        "🚶 6 min jusqu'à École\n⏸ 5 min à École, reprise 8 h 25\n🚶 5 min\n"
+        "8 h 35 Bus 192 Les Blagis → Bourg-la-Reine (8 h 40)\n8 h 43 RER B → Denfert-Rochereau (8 h 59)\n🚶 3 min"
+    )
