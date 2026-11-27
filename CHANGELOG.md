@@ -5,6 +5,10 @@ numérotation [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.1.0b13] - 2026-11-27
+
+Pré-version de test.
+
 ### Modifié
 
 - Notifications : chaque lieu est nommé une fois, là où on y va. « Pars de <départ> », « 🚶 8 min jusqu'à <gare> », « 8 h 39 RER B → <gare d'arrivée> (9 h 05) » (la gare de départ n'est plus répétée), « ⏸ 5 min, reprise 8 h 25 » et, pour finir, « 🚶 5 min → <destination> ».
