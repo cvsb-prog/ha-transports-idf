@@ -1111,7 +1111,9 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
                 "sections": sections,
                 "etapes": etapes,
                 "resume": resume_itineraire(sections, j.get("duration"), j.get("nb_transfers")),
-                "texte": texte_itineraire(etapes, j.get("departure_date_time"), j.get("arrival_date_time")),
+                "texte": texte_itineraire(etapes, j.get("departure_date_time"), j.get("arrival_date_time"),
+                                          ((j.get("sections") or [{}])[0].get("from") or {}).get("name"),
+                                          ((j.get("sections") or [{}])[-1].get("to") or {}).get("name")),
             }
         )
     return sortie
@@ -1120,26 +1122,35 @@ def analyser_itineraires(donnees: Any) -> list[dict[str, Any]]:
 ICONES_MODE = {"marche": "🚶", "velo": "🚲", "voiture": "🚗", "transports": "🚌"}
 
 
-def texte_itineraire(etapes: list[dict[str, Any]], depart: Any = None, arrivee: Any = None) -> str:
+def texte_itineraire(etapes: list[dict[str, Any]], depart: Any = None, arrivee: Any = None, origine: str | None = None, destination: str | None = None) -> str:
     """Version texte des étapes, pour les notifications (une étape par ligne).
 
-    Sans répétitions : ni ligne « Départ / Arrivée » (le titre et l'en-tête de la notification les donnent),
-    ni lieu répété (la marche mène à l'arrêt de la ligne suivante, qui le nomme ; une correspondance sur le
-    même arrêt ne le renomme pas). depart et arrivee restent acceptés pour compatibilité.
+    Chaque lieu est nommé une fois, là où on y va : « Pars de … », « 🚶 8 min jusqu'à <gare> », puis
+    « 8 h 39 RER B → <gare d'arrivée> (9 h 05) » sans renommer la gare de départ, et « 🚶 5 min → <destination> »
+    pour finir. Pas de ligne « Départ / Arrivée » : le titre et l'en-tête de la notification les donnent.
+    depart et arrivee restent acceptés pour compatibilité.
     """
-    lignes, ici = [], None
-    for e in etapes:
+    lignes, ici = [], origine
+    if origine:
+        lignes.append(f"Pars de {origine}")
+    for n, e in enumerate(etapes):
+        dernier = n == len(etapes) - 1
         if e["type"] == "detour":
             lignes.append(f"{ICONES_MODE.get(e.get('mode'), '🚶')} {e['duree']} min jusqu'à {e.get('vers')}")
             ici = e.get("vers")
         elif e["type"] == "pause":
-            lignes.append(f"⏸ {e['duree']} min à {e.get('lieu')}" + (f", reprise {e['reprise']}" if e.get("reprise") else ""))
+            lieu = f" à {e.get('lieu')}" if e.get("lieu") and e.get("lieu") != ici else ""
+            lignes.append(f"⏸ {e['duree']} min{lieu}" + (f", reprise {e['reprise']}" if e.get("reprise") else ""))
+            ici = e.get("lieu") or ici
         elif e["type"] == "marche":
-            lignes.append(f"🚶 {e['duree']} min")
-            ici = None  # l'arrêt où mène la marche est nommé par la ligne suivante
+            if dernier and destination:
+                lignes.append(f"🚶 {e['duree']} min → {destination}")
+            else:
+                lignes.append(f"🚶 {e['duree']} min" + (f" jusqu'à {e['vers']}" if e.get("vers") else ""))
+            ici = e.get("vers") or ici
         else:
             ligne = f"{e.get('mode') or ''} {e.get('nom') or ''}".strip()
-            de = "" if e.get("de") and e.get("de") == ici else f" {e.get('de')}"
+            de = f" {e.get('de')}" if e.get("de") and e.get("de") != ici else ""
             lignes.append(f"{e.get('depart') or '?'} {ligne}{de} → {e.get('vers')} ({e.get('arrivee') or '?'})")
             ici = e.get("vers")
     return "\n".join(lignes)

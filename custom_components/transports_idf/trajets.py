@@ -317,7 +317,7 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
             "etapes": etapes,
             "sections": sections,
             "resume": resume_itineraire(sections, int((arrivee - depart).total_seconds()) if arrivee else None, len(sections) - 1 if sections else None),
-            "texte": texte_itineraire(etapes, _fmt(depart), suite.get("arrivee")),
+            "texte": texte_itineraire(etapes, _fmt(depart), suite.get("arrivee"), *_extremites(d)),
             "detour": reprise is not None,
         }
 
@@ -515,7 +515,7 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
             "sections": sections,
             "correspondances": max(0, len(sections) - 1),
             "resume": resume_itineraire(sections, duree, len(sections) - 1 if sections else None),
-            "texte": texte_itineraire(etapes, _fmt(depart), _fmt(arrivee)),
+            "texte": texte_itineraire(etapes, _fmt(depart), _fmt(arrivee), points[0].get("nom"), points[-1].get("nom")),
             "detour": True,
             "points": horaires,
             "possible": not retards,
@@ -942,3 +942,12 @@ class TraficCoordinator(DataUpdateCoordinator[dict[str, EtatTrajet]]):
                 e["alerte"] = niveau if niveau and niveau != "normal" else None
                 e["messages"] = messages_affiches([p for p in etat.perturbations if lid in (p.get("lignes_ids") or [])], False)
         return etapes
+
+
+def _extremites(d: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Noms du lieu de départ et de la destination du trajet, pour le texte des notifications."""
+    try:
+        pts = points_du_trajet(d)
+    except (KeyError, TypeError, ValueError):
+        return None, None
+    return (pts[0].get("nom") if pts else None), (pts[-1].get("nom") if pts else None)

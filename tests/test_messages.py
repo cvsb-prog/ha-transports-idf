@@ -577,7 +577,7 @@ async def test_trajet_retour_a_la_maison(hass: HomeAssistant, aioclient_mock):
 
 
 def test_texte_itineraire_sans_repetition():
-    """Une ligne par étape, sans « Départ / Arrivée » ni lieu répété."""
+    """Une ligne par étape, sans « Départ / Arrivée » ; chaque lieu nommé une fois, là où on y va."""
     from custom_components.transports_idf.api import texte_itineraire
 
     etapes = [
@@ -589,6 +589,11 @@ def test_texte_itineraire_sans_repetition():
         {"type": "marche", "duree": 3, "vers": "Bureau"},
     ]
     assert texte_itineraire(etapes, "20261106T081400", "20261106T090200") == (
-        "🚶 6 min jusqu'à École\n⏸ 5 min à École, reprise 8 h 25\n🚶 5 min\n"
-        "8 h 35 Bus 192 Les Blagis → Bourg-la-Reine (8 h 40)\n8 h 43 RER B → Denfert-Rochereau (8 h 59)\n🚶 3 min"
+        "🚶 6 min jusqu'à École\n⏸ 5 min, reprise 8 h 25\n🚶 5 min jusqu'à Les Blagis\n"
+        "8 h 35 Bus 192 → Bourg-la-Reine (8 h 40)\n8 h 43 RER B → Denfert-Rochereau (8 h 59)\n🚶 3 min jusqu'à Bureau"
+    )
+    # Chaque lieu nommé une fois, là où on y va : départ en tête, destination en fin.
+    assert texte_itineraire(etapes, origine="Maison", destination="Bureau") == (
+        "Pars de Maison\n🚶 6 min jusqu'à École\n⏸ 5 min, reprise 8 h 25\n🚶 5 min jusqu'à Les Blagis\n"
+        "8 h 35 Bus 192 → Bourg-la-Reine (8 h 40)\n8 h 43 RER B → Denfert-Rochereau (8 h 59)\n🚶 3 min → Bureau"
     )
